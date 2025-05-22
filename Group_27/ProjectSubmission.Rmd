@@ -1,0 +1,672 @@
+---
+title: "ProjectSubmission"
+author: "HamzaAfzalAshraf"
+date: "2025-03-07"
+output: pdf_document
+---
+```{r setup, echo=FALSE}
+# Load required libraries
+library(tidyverse)
+library(cluster)  # For hierarchical clustering
+library(factoextra)  # For visualization
+library(brms)  # Bayesian modeling
+library(cmdstanr)  # Backend for brms
+```
+
+# Developing Clusters
+
+## ActivityGroupCluster
+```{r ActivityGroupCluster 1}
+data <- read.csv("Student_performance.csv")
+
+df_cluster_ActivityGroup <- data %>%
+  select(Extracurricular, Sports, Music, Volunteering)
+
+dist_matrix_ActivityGroup <- dist(df_cluster_ActivityGroup, method = "euclidean")
+
+hc_ActivityGroup <- hclust(dist_matrix_ActivityGroup, method = "ward.D2")
+
+plot(hc_ActivityGroup, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+```{r TestWSSMethod 1}
+library(factoextra)
+fviz_nbclust(df_cluster_ActivityGroup, hcut, method = "wss")
+```
+
+
+```{r Test_Sihoutte_K4 1}
+library(cluster)
+sil_ActivityGroup <- silhouette(cutree(hc_ActivityGroup, k = 4), dist_matrix_ActivityGroup)
+fviz_silhouette(sil_ActivityGroup)
+```
+
+
+```{r Test_Sihoutte_K5 1}
+library(cluster)
+sil_ActivityGroup <- silhouette(cutree(hc_ActivityGroup, k = 5), dist_matrix_ActivityGroup)
+fviz_silhouette(sil_ActivityGroup)
+```
+Since AWS values lies between [-1,1] and Higher values are better, we will go with k=5 which is also taken from the WSS Elbow
+
+## StudyHabitCluster
+```{r StudyHabitCluster 2}
+data <- read.csv("Student_performance.csv")
+
+df_cluster_StudyHabit <- data %>%
+  select(StudyTimeWeekly, Absences, Tutoring)
+
+dist_matrix_StudyHabit <- dist(df_cluster_StudyHabit, method = "euclidean")
+
+hc_StudyHabit <- hclust(dist_matrix_StudyHabit, method = "ward.D2")
+
+
+plot(hc_StudyHabit, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+
+```{r TestWSSMethod 2}
+library(factoextra)
+fviz_nbclust(df_cluster_StudyHabit, hcut, method = "wss")
+```
+
+```{r Test_Sihoutte_K4 2}
+library(cluster)
+sil_StudyHabit <- silhouette(cutree(hc_StudyHabit, k = 4), dist_matrix_StudyHabit)
+fviz_silhouette(sil_StudyHabit)
+```
+```{r Test_Sihoutte_K6 2}
+library(cluster)
+sil_StudyHabit <- silhouette(cutree(hc_StudyHabit, k = 6), dist_matrix_StudyHabit)
+fviz_silhouette(sil_StudyHabit)
+```
+```{r Test_Sihoutte_K8 2}
+library(cluster)
+sil_StudyHabit <- silhouette(cutree(hc_StudyHabit, k = 8), dist_matrix_StudyHabit)
+fviz_silhouette(sil_StudyHabit)
+```
+```{r Test_Sihoutte_K16 2}
+library(cluster)
+sil_StudyHabit <- silhouette(cutree(hc_StudyHabit, k = 16), dist_matrix_StudyHabit)
+fviz_silhouette(sil_StudyHabit)
+```
+
+
+#1) Prior Sensitivity Analysis for StudyHabits Cluster
+```{r StudyHabits 3}
+data <- read.csv("Student_performance.csv")
+
+data$GradeClass <- factor(data$GradeClass, 
+                          levels = c(0, 1, 2, 3, 4), 
+                          labels = c("A", "B", "C", "D", "F"), 
+                          ordered = TRUE)
+```
+
+We focus on changing the prior for regression coefficients while keeping the prior for random effects constant. This way, we isolate the impact of different priors on the regression coefficients.
+```{r Prior_Setting 3}
+# Narrower Prior (More informative):
+priors_alt1 <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Narrow prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Same prior for random effects (Level)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+
+# Broader Prior (Weakly informative):
+priors_alt2 <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Same prior for random effects (Level)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+```
+
+
+
+Apply clustering
+```{r Clustering 3}
+data <- data %>%
+  mutate(
+    StudyTimeWeekly = scale(StudyTimeWeekly),
+    Absences = scale(Absences)
+  )
+
+df_cluster_StudyHabit <- data %>% 
+  select(StudyTimeWeekly, Absences) %>% 
+  na.omit()  # Ensure no missing values
+
+# Compute Euclidean distance
+dist_matrix_StudyHabit <- dist(df_cluster_StudyHabit, method = "euclidean")
+
+# Perform hierarchical clustering using Ward's method
+hc <- hclust(dist_matrix_StudyHabit, method = "ward.D2")
+
+# Plot dendrogram
+plot(hc, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+Check Results
+```{r WSSMethod 3}
+library(factoextra)
+fviz_nbclust(df_cluster_StudyHabit, hcut, method = "wss")
+```
+
+```{r Test_Sihoutte_K6 3}
+library(cluster)
+sil_StudyHabit <- silhouette(cutree(hc_StudyHabit, k = 6), dist_matrix_StudyHabit)
+fviz_silhouette(sil_StudyHabit)
+```
+
+
+```{r SetClusters 3}
+data$Cluster_HC <- cutree(hc, k = 6)
+
+data$Cluster_HC <- as.factor(data$Cluster_HC)
+```
+
+Fit two versions of the model, keeping all settings the same except for the prior on the regression coefficients.
+```{r Fit_Model_With_Prior_1 3,echo=FALSE}
+mdl_cnt_sh_prior_def_alt1 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+    Ethnicity + (1 | Cluster_HC),
+  family = "gaussian",
+  data = data,
+  prior = priors_alt1,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+```
+
+```{r Fit_Model_With_Prior_2 3,echo=FALSE}
+mdl_cnt_sh_prior_def_alt2 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+    Ethnicity + (1 | Cluster_HC),
+  family = "gaussian",
+  data = data,
+  prior = priors_alt2,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+```
+
+Extract and compare posterior summaries for key parameters across the two models.
+```{r Print_Results 3}
+# Summaries for the hierarchical models
+summary_alt1 <- summary(mdl_cnt_sh_prior_def_alt1)$fixed
+summary_alt2 <- summary(mdl_cnt_sh_prior_def_alt2)$fixed
+
+# Combine summaries into a single table
+sensitivity_summary <- bind_rows(
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the summary
+print(sensitivity_summary)
+```
+
+Visualize the posterior distributions of key regression coefficients (e.g., Absences, StudyTimeWeekly) across the two models.
+```{r Plots 3}
+# Extraction of posterior samples
+posterior_alt1 <- posterior_samples(mdl_cnt_sh_prior_def_alt1)
+posterior_alt2 <- posterior_samples(mdl_cnt_sh_prior_def_alt2)
+
+# Combineed posterior samples for visualization
+posterior_combined <- bind_rows(
+  posterior_alt1 %>% mutate(Model = "Alt1"),
+  posterior_alt2 %>% mutate(Model = "Alt2")
+)
+
+# Plotposterior densities for a key parameter (e.g., "b_ParentalSupport")
+library(ggridges)
+ggplot(posterior_combined, aes(x = b_ParentalSupport, y = Model, fill = Model)) +
+  geom_density_ridges(alpha = 0.5) +
+  labs(title = "Prior Sensitivity Analysis: Effect of Parental Support",
+       x = "Posterior Estimate", y = "Model") +
+  theme_minimal()
+
+```
+
+Run posterior predictive checks for both models to compare how well they predict the observed data.
+```{r PPCheck_for_models 3}
+# Posterior predictive checks for the first model
+pp_check(mdl_cnt_sh_prior_def_alt1, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Narrower Priors (Alt1)")
+
+# Posterior predictive checks for the second model
+pp_check(mdl_cnt_sh_prior_def_alt2, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Broader Priors (Alt2)")
+```
+
+
+```{r Residual_Plots 3}
+pp_check(mdl_cnt_sh_prior_def_alt1, type = "error_scatter_avg")
+pp_check(mdl_cnt_sh_prior_def_alt2, type = "error_scatter_avg")
+```
+
+
+```{r Comparison_Loo 3}
+loo_alt1 <- loo(mdl_cnt_sh_prior_def_alt1)
+loo_alt2 <- loo(mdl_cnt_sh_prior_def_alt2)
+
+loo_comparison <- loo_compare(loo_alt1, loo_alt2)
+print(loo_comparison)
+```
+
+
+#2) Prior Sensitivity Analysis for ActivityGroup Cluster
+
+We should focus on changing the prior for regression coefficients while keeping the prior for random effects constant. This way, we isolate the impact of different priors on the regression coefficients.
+```{r ActivityGroup 4}
+data <- read.csv("Student_performance.csv")
+# Scale continuous predictors
+data$StudyTimeWeekly <- scale(data$StudyTimeWeekly)
+data$Absences <- scale(data$Absences)
+
+# Select variables for clustering
+df_cluster_ActivityGroup <- data %>%
+  select(Extracurricular, Sports, Music, Volunteering)
+
+# Compute distance matrix
+dist_matrix_ActivityGroup <- dist(df_cluster_ActivityGroup, method = "euclidean")
+
+# Perform hierarchical clustering using Ward's method
+hc_ActivityGroup <- hclust(dist_matrix_ActivityGroup, method = "ward.D2")
+
+
+# Plot dendrogram
+plot(hc_ActivityGroup, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+```{r WSSMethod 4}
+library(factoextra)
+fviz_nbclust(df_cluster_ActivityGroup, hcut, method = "wss")
+```
+
+```{r Test_Sihoutte_K5 4}
+library(cluster)
+sil_ActivityGroup <- silhouette(cutree(hc_ActivityGroup, k = 5), dist_matrix_ActivityGroup)
+fviz_silhouette(sil_ActivityGroup)
+```
+
+
+```{r Test_Sihoutte_K6 4}
+library(cluster)
+sil_ActivityGroup <- silhouette(cutree(hc_ActivityGroup, k = 6), dist_matrix_ActivityGroup)
+fviz_silhouette(sil_ActivityGroup)
+```
+
+
+
+```{r Prior_Setting 4}
+priors_alt1 <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Tight prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+
+priors_alt2 <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+
+# Cut tree to create 5 clusters
+data$Cluster_HC <- cutree(hc_ActivityGroup, k = 5)
+
+# Convert to factor
+data$Cluster_HC <- as.factor(data$Cluster_HC)
+```
+
+Fit two versions of the model, keeping all settings the same except for the prior on the regression coefficients.
+```{r Fit_Model_With_Prior_1 4,echo=FALSE}
+mdl_cnt_ag_prior_alt1 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | Cluster_HC),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors_alt1,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r}
+summary(mdl_cnt_ag_prior_alt1)
+```
+
+
+
+```{r Fit_Model_With_Prior_2 4,echo=FALSE}
+mdl_cnt_ag_prior_alt2 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | Cluster_HC),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors_alt2,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+Extract and compare posterior summaries for key parameters across the two models.
+```{r Print_Results 4}
+# Summaries for the hierarchical models
+summary_alt1 <- summary(mdl_cnt_ag_prior_alt1)$fixed
+summary_alt2 <- summary(mdl_cnt_ag_prior_alt2)$fixed
+
+# Combine summaries into a single table
+sensitivity_summary <- bind_rows(
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the summary
+print(sensitivity_summary)
+```
+
+Visualize the posterior distributions of key regression coefficients (e.g., Absences, StudyTimeWeekly) across the two models.
+```{r Plots 4}
+# Extract posterior samples
+posterior_alt1 <- posterior_samples(mdl_cnt_ag_prior_alt1)
+posterior_alt2 <- posterior_samples(mdl_cnt_ag_prior_alt2)
+
+# Combine posterior samples for visualization
+posterior_combined <- bind_rows(
+  posterior_alt1 %>% mutate(Model = "Alt1"),
+  posterior_alt2 %>% mutate(Model = "Alt2")
+)
+
+# Plot posterior densities for a key parameter (e.g., "b_ParentalSupport")
+library(ggridges)
+ggplot(posterior_combined, aes(x = b_ParentalSupport, y = Model, fill = Model)) +
+  geom_density_ridges(alpha = 0.5) +
+  labs(title = "Prior Sensitivity Analysis: Effect of Parental Support",
+       x = "Posterior Estimate", y = "Model") +
+  theme_minimal()
+
+# Repeat for other predictors if needed
+```
+
+Run posterior predictive checks for both models to compare how well they predict the observed data.
+```{r PPCheck_for_models 4}
+# Posterior predictive checks for the first model
+pp_check(mdl_cnt_ag_prior_alt1, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Narrower Priors (Alt1)")
+
+# Posterior predictive checks for the second model
+pp_check(mdl_cnt_ag_prior_alt2, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Broader Priors (Alt2)")
+```
+
+
+
+```{r Residual_Plots 4}
+pp_check(mdl_cnt_ag_prior_alt1, type = "error_scatter_avg")
+
+
+pp_check(mdl_cnt_ag_prior_alt2, type = "error_scatter_avg")
+```
+
+Use Leave-One-Out Cross-Validation (LOO) to compare predictive performance between the two models.
+```{r Comparison_Loo 4}
+loo_alt1 <- loo(mdl_cnt_ag_prior_alt1)
+loo_alt2 <- loo(mdl_cnt_ag_prior_alt2)
+
+loo_comparison <- loo_compare(loo_alt1, loo_alt2)
+print(loo_comparison)
+```
+
+Extract and compare posterior summaries for key parameters across the two models.
+```{r Print_Results 4}
+# Summaries for the hierarchical models
+summary_alt1 <- summary(mdl_cnt_ag_prior_alt1)$fixed
+summary_alt2 <- summary(mdl_cnt_ag_prior_alt2)$fixed
+
+# Combine summaries into a single table
+sensitivity_summary <- bind_rows(
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the summary
+print(sensitivity_summary)
+```
+
+#3) Ordinal Model for ActivityGroup:
+```{r Clustering_And_PreProcessing 5}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+
+# Scale continuous predictors
+data$StudyTimeWeekly <- scale(data$StudyTimeWeekly)
+data$Absences <- scale(data$Absences)
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE) # Ordinal
+
+
+# Select variables for clustering
+df_cluster_ActivityGroup <- data %>%
+  select(Extracurricular, Sports, Music, Volunteering)
+
+# Compute distance matrix
+dist_matrix_ActivityGroup <- dist(df_cluster_ActivityGroup, method = "euclidean")
+
+# Perform hierarchical clustering using Ward's method
+hc_ActivityGroup <- hclust(dist_matrix_ActivityGroup, method = "ward.D2")
+
+
+# Plot dendrogram
+plot(hc_ActivityGroup, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+```{r Prior_Setting 5}
+# Cut tree to create 5 clusters
+data$Cluster_HC <- cutree(hc_ActivityGroup, k = 5)
+
+# Convert to factor
+data$Cluster_HC <- as.factor(data$Cluster_HC)
+
+
+
+priors <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Tight prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+```
+
+```{r Fit_Ordinal_Mode 5,echo=FALSE}
+mdl_ord_ag_prior <- brm(
+  formula = GradeClass  ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity                   + (1 | Cluster_HC),
+  family = cumulative(link = "logit"),   # ordinal family logit as link function
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r Print_Summary 5}
+summary(mdl_ord_ag_prior)
+```
+
+```{r PPCheck_for_model 5}
+pp_check(mdl_ord_ag_prior, type = "bars")
+```
+
+```{r Residual_Plot 5}
+pp_check(mdl_ord_ag_prior, type = "error_scatter_avg")
+```
+
+
+#4) Ordinal model for ActivityGroup Refined:
+```{r Clustering_And_PreProcessing 6}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+
+# Scale continuous predictors
+data$StudyTimeWeekly <- scale(data$StudyTimeWeekly)
+data$Absences <- scale(data$Absences)
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE) # Ordinal
+
+
+# Select variables for clustering
+df_cluster_ActivityGroup <- data %>%
+  select(Extracurricular, Sports, Music, Volunteering)
+
+# Compute distance matrix
+dist_matrix_ActivityGroup <- dist(df_cluster_ActivityGroup, method = "euclidean")
+
+# Perform hierarchical clustering using Ward's method
+hc_ActivityGroup <- hclust(dist_matrix_ActivityGroup, method = "ward.D2")
+
+
+# Plot dendrogram
+plot(hc_ActivityGroup, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+```{r Prior_Setting 6}
+# Cut tree to create 5 clusters
+data$Cluster_HC <- cutree(hc_ActivityGroup, k = 5)
+
+# Convert to factor
+data$Cluster_HC <- as.factor(data$Cluster_HC)
+
+
+
+priors <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Tight prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+```
+
+```{r Fit_Ordinal_Model 6,echo=FALSE}
+mdl_ord_ag_prior_refined <- brm(
+  formula = GradeClass ~ Tutoring + ParentalSupport + StudyTimeWeekly + Absences  + Ethnicity + (1 | Cluster_HC),
+  family = cumulative(link = "logit"),   # ordinal family logit as link function
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r Print_Summary 6}
+summary(mdl_ord_ag_prior_refined)
+```
+
+```{r PPCheck_for_model 6}
+pp_check(mdl_ord_ag_prior_refined, type = "bars")
+```
+
+```{r Residual_Plot 6}
+pp_check(mdl_ord_ag_prior_refined, type = "error_scatter_avg")
+```
+
+
+#5) Continuous model for ActivityGroup:
+```{r Clustering_And_PreProcessing 7}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+
+sum(is.na(data$ActivityGroup))
+# Scale continuous predictors
+data$StudyTimeWeekly <- scale(data$StudyTimeWeekly)
+data$Absences <- scale(data$Absences)
+
+
+df_cluster_ActivityGroup <- data %>%
+  select(Extracurricular, Sports, Music, Volunteering)
+
+# Compute distance matrix
+dist_matrix_ActivityGroup <- dist(df_cluster_ActivityGroup, method = "euclidean")
+
+# Perform hierarchical clustering using Ward's method
+hc_ActivityGroup <- hclust(dist_matrix_ActivityGroup, method = "ward.D2")
+
+
+# Plot dendrogram
+plot(hc_ActivityGroup, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+```
+
+```{r Prior_Setting 7}
+# Cut tree to create 5 clusters
+data$Cluster_HC <- cutree(hc_ActivityGroup, k = 5)
+
+# Convert to factor
+data$Cluster_HC <- as.factor(data$Cluster_HC)
+
+
+priors <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Tight prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+```
+
+```{r Fit_Continuous_Model 7,echo=FALSE}
+mdl_cnt_ag_prior_refined <- brm(
+  formula = GPA ~ ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | Cluster_HC), 
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+
+```
+
+
+```{r Print_Summary 7}
+summary(mdl_cnt_ag_prior_refined)
+
+```
+
+
+```{r PPCheck_for_model 7}
+pp_check(mdl_cnt_ag_prior_refined, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Continuous Model")
+```
+
+```{r Residual_Plot 7}
+bayes_R2(mdl_ord_ag_prior_refined)
+bayes_R2(mdl_cnt_ag_prior_refined)
+```
+
+```{r Conditional_plots_Continuous 7}
+plot(conditional_effects(mdl_cnt_ag_prior_refined), points = TRUE)
+```
+
+
+```{r Conditional_plots_Ordinal}
+plot(conditional_effects(mdl_ord_ag_prior_refined, categorical = TRUE), points = TRUE)
+```
+
+
+
