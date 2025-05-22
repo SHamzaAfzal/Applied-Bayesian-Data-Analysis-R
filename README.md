@@ -14,10 +14,15 @@ Project Goal: Identify key factors influencing student academic performance (GPA
 ## Repository Structure
 
 ├── hazzard/                                # code in haphazard manner (before submission)
+
 └── ProjectSubmission.Rmd                   # R scripts for analysis & modeling
+
 └── Group_27.pdf                            # LaTeX report (PDF)
+
 └── Knit_Output_R Code_11March.pdf          # Code output (PDF)
+
 └── ABDA Group# 27.pptx                     # Project Presentation (pptx)
+
 └── README.md                               # Project overview
 
 
@@ -25,8 +30,3 @@ Project Goal: Identify key factors influencing student academic performance (GPA
 ## Challenges & Learnings
 - Addressed divergent transitions in Gaussian models via prior sensitivity analysis.
 - Learned the trade-offs between ordinal vs. continuous target variables.
-
-## How to Reproduce
-1. Clone repo:
-   git clone [repo-url]
-2. Run R scripts in scripts/ (see requirements.R for packages).
