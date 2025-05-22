@@ -1,0 +1,330 @@
+---
+title: "ABDA Last"
+author: "Zeynep Beyza Aktepe"
+date: "2025-01-17"
+output: html_document
+---
+
+```{r}
+library(brms)
+#library(tidyverse) 
+```
+
+```{r}
+data <- read.csv("Student_performance_data.csv")
+```
+
+```{r}
+head(data)
+```
+
+```{r}
+colSums((data))
+```
+
+```{r}
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+```
+
+```{r}
+# Standardize numeric predictors
+data <- data %>%
+  mutate(
+    StudyTimeWeekly = scale(StudyTimeWeekly),
+    Absences = scale(Absences)
+  )
+```
+
+```{r}
+# Check the structure of GradeClass
+str(data$GradeClass)
+
+# Confirm the levels and encoding
+levels(data$GradeClass)
+```
+
+```{r}
+head(data)
+```
+
+```{r}
+# Check for missing values in the dataset
+colSums(is.na(data))
+
+# Summarize key variables
+summary(data)
+
+# Visualize the distribution of GradeClass
+ggplot(data, aes(x = GradeClass)) +
+  geom_bar() +
+  labs(title = "Distribution of GradeClass", x = "Grade Class", y = "Count")
+
+# Explore relationships between predictors and GradeClass
+ggplot(data, aes(x = ParentalEducation, fill = GradeClass)) +
+  geom_bar(position = "fill") +
+  labs(title = "Parental Education vs Grade Class", x = "Parental Education", y = "Proportion") +
+  theme_minimal()
+
+```
+
+```{r}
+# Define improved priors
+priors <- c(
+  set_prior("normal(0, 2)", class = "b"),         # Stronger prior for fixed effects
+  set_prior("cauchy(0, 2)", class = "sd"),        # Priors for random effect standard deviations
+  set_prior("normal(0, 5)", class = "Intercept")  # Prior for intercepts
+)
+
+```
+
+
+
+```{r}
+# Explicitly use non-centered parameterization in brms
+model <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + StudyTimeWeekly + Absences + 
+            Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+            (1 | Ethnicity),  # Random intercept for Ethnicity
+  family = cumulative(link = "logit"),  # Ordinal logistic regression
+  data = data,
+  prior = priors,
+  cores = 8,  # Parallel computation
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  backend = "cmdstanr"  # Use cmdstan backend for more efficient sampling
+)
+
+```
+
+```{r}
+# Print a summary of the model
+summary(model)
+
+# Plot diagnostics (trace plots and density plots)
+plot(model)
+
+# Posterior predictive checks
+pp_check(model)
+
+# Check the random effects for Ethnicity
+ranef(model)
+
+# Extract fixed effects
+fixef(model)
+
+```
+
+```{r}
+# Plot fixed effects with credible intervals
+plot(conditional_effects(model), points = TRUE)
+
+# Visualize the effect of StudyTimeWeekly on GradeClass
+conditional_effects(model, effects = "StudyTimeWeekly") %>%
+  plot()
+
+# Visualize random effects (Ethnicity)
+random_effects <- ranef(model)$Ethnicity
+print(random_effects)
+
+# Summarize and visualize posterior probabilities
+posterior_samples <- posterior_samples(model)
+head(posterior_samples)
+
+```
+#A positive estimate suggests that more absences increase the likelihood of being in lower grade classes (e.g., D or F) significantly.
+#A negative estimate indicates that higher study time decreases the likelihood of lower grades (e.g., students are more likely to be in A or B).
+#Higher parental support also decreases the likelihood of lower grades.
+
+#STRONG PREDICTORS: Strong predictors include Absences, StudyTimeWeekly, Tutoring, ParentalSupport, Extracurricular, Sports, and Music based on their credible intervals (CIs not overlapping zero).
+
+#WEAK PREDICTORS:Gender, ParentalEducation, and Volunteering have credible intervals that include zero, indicating weak or negligible effects. 
+```{r}
+pp_check(model, type = "hist")
+
+```
+
+```{r}
+pp_check(model, type = "boxplot_grouped", group = "Ethnicity")
+
+```
+
+
+```{r}
+mcmc_plot(model, type = "hist", bins = 30)
+
+```
+
+
+```{r}
+mcmc_plot(model, type = "dens")
+```
+
+```{r}
+pp_check(model, type = "ecdf_overlay")
+#StudyTimeWeekly
+
+```
+
+```{r}
+#'bars', 'bars_grouped', 'boxplot', 'dens', 'dens_overlay', 'dens_overlay_grouped', 'ecdf_overlay', 'ecdf_overlay_grouped', 'error_binned', 'error_hist', 'error_hist_grouped', 'error_scatter', 'error_scatter_avg', 'error_scatter_avg_grouped', 'error_scatter_avg_vs_x', 'freqpoly', 'freqpoly_grouped', 'hist', 'intervals', 'intervals_grouped', 'km_overlay', 'km_overlay_grouped', 'loo_intervals', 'loo_pit', 'loo_pit_overlay', 'loo_pit_qq', 'loo_ribbon', 'pit_ecdf', 'pit_ecdf_grouped', 'ribbon', 'ribbon_grouped', 'rootogram', 'scatter', 'scatter_avg', 'scatter_avg_grouped', 'stat', 'stat_2d', 'stat_freqpoly', 'stat_freqpoly_grouped', 'stat_grouped', 'violin_grouped'
+#pp_check(model, type = "km_overlay")
+conditional_effects(model, effects = 'Gender', 'ParentalEducation', 'StudyTimeWeekly', 'Absences', 'Tutoring'")
+```
+
+
+```{r}
+pp_check(model, type = "stat", stat = "mean")
+
+```
+# The first plot compares the mean of the observed data (𝑇(𝑦), the vertical dark blue line) with the distribution of the means from the posterior predictive simulations (𝑇(𝑦rep), the histogram in light blue).
+
+#Interpretation
+#The observed mean (dark blue line) aligns very well with the simulated means from the posterior predictive distribution.
+#This indicates that the model accurately captures the central tendency of the observed data.
+#Assessment
+#Good fit: There is no evidence of mismatch between the observed and predicted means.
+#No improvement needed: The model fits the mean of the data well.
+
+```{r}
+pp_check(model, type = "stat", stat = "sd")
+
+```
+
+# The second plot compares the standard deviation of the observed data (𝑇(𝑦), the vertical dark blue line) with the distribution of the standard deviations from the posterior predictive simulations (𝑇(𝑦rep), the histogram in light blue).
+
+#Interpretation
+#The observed standard deviation (dark blue line) also aligns well with the simulated standard deviations.
+#This suggests that the model captures the variability (spread) of the observed data effectively.
+#Assessment
+#Good fit: The predicted variability is consistent with the observed data.
+#No improvement needed: The model adequately accounts for the spread in the data.
+
+
+# Both checks indicate that:
+#The model is doing a good job of capturing the mean and variability of the observed data.
+#There is no evidence of systematic bias or misfit in these aspects of the data.
+
+```{r}
+# Plot random effects for Ethnicity
+ranef_plot <- as.data.frame(ranef(model)$Ethnicity)
+colnames(ranef_plot) <- c("Estimate", "Est.Error", "Q2.5", "Q97.5")
+print(ranef_plot)
+
+# Visualize random effects
+library(ggplot2)
+ggplot(ranef_plot, aes(x = rownames(ranef_plot), y = Estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = Q2.5, ymax = Q97.5)) +
+  labs(title = "Random Effects for Ethnicity", x = "Ethnicity", y = "Intercept Estimate") +
+  theme_minimal()
+
+```
+
+
+```{r}
+# Observed grade proportions
+observed_grades <- table(data$GradeClass) / nrow(data)
+
+# Predicted grade proportions
+predicted_grades <- posterior_predict(model) %>%
+  as.data.frame() %>%
+  mutate_all(as.factor) %>%
+  summarise_all(~ mean(. == levels(data$GradeClass))) %>%
+  colMeans()
+
+# Combine for comparison
+grade_comparison <- data.frame(
+  Grade = levels(data$GradeClass),
+  Observed = observed_grades,
+  Predicted = predicted_grades
+)
+
+# Plot comparison
+ggplot(grade_comparison, aes(x = Grade)) +
+  geom_bar(aes(y = Observed, fill = "Observed"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = Predicted, fill = "Predicted"), stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("Observed" = "blue", "Predicted" = "red")) +
+  labs(title = "Observed vs Predicted Grade Proportions", y = "Proportion") +
+  theme_minimal()
+
+```
+```{r}
+# Compute LOO cross-validation
+loo_result <- loo(model)
+
+# Plot diagnostic for influential points
+plot(loo_result)
+
+```
+#Most k-values are well below 0.5, indicating that the majority of observations are not overly influential and the model is robust for these data points.
+#here are no visible points exceeding 𝑘≥1, meaning there are no extremely problematic observations that could destabilize the model.
+#The distribution of k-values is relatively uniform and centered around k=0, which suggests the model is fitting well overall.
+
+#The model appears to perform well in terms of LOO cross-validation diagnostics, with no major concerns about individual observations.
+
+```{r}
+pp_check(model, type = "stat", stat = "skewness")
+
+```
+
+```{r}
+pp_check(model, type = "bars", prob = 0.5)
+
+```
+
+
+```{r}
+pp_check(model, type = "stat_grouped", stat = "mean", group = "Ethnicity")
+
+```
+```{r}
+pp_check(model, type = "violin_grouped", group = "Ethnicity")
+
+```
+
+```{r}
+######## NICE TO HAVE STUFF START ###########
+posterior_samples(model_with_default_priors) %>%
+  bind_rows(posterior_samples(model_with_new_priors), .id = "Model") %>%
+  ggplot(aes(x = parameter, y = value, fill = Model)) +
+  geom_density_ridges()
+
+######## NICE TO HAVE STUFF END ###########
+```
+
+
+#To do
+#Other predictors like Gender, Extracurricular, Sports, and Music have smaller effects with credible intervals that include zero, suggesting weak or negligible influence.
+#The standard deviation of the random intercept is small, indicating limited variability in GradeClass across Ethnic groups after accounting for fixed effects.
+##The random intercept for Ethnicity (with near-zero estimates and small standard deviations) suggests it contributes little. Consider alternative groupings (e.g., ParentalSupport, AbsenceLevel) to capture more meaningful group-level variability.
+##Exchangeability within Ethnicity: Suggestion of chatgpt is to Replace Ethnicity with a more meaningful grouping (e.g., ParentalEducation or ParentalSupport).
+## enhancing exchagability (1 | ParentalSupport) or (1 | StudyTimeCategory)
+##OR 
+#Adding Group-Level Predictors:
+#Include predictors like group-level mean Absences or mean StudyTimeWeekly to better explain between-group differences:
+#GradeClass ~ GroupLevelMeanAbsences + ... + (1 | Group)
+
+
+
+###### IS THERE INDEPENDENCE? HOW TO CHECK
+##Ordinal logistic regression assumes proportional odds, meaning the relationship between predictors and the log odds of being in a higher category is constant across categories (e.g., the effect of Absences is the same for A vs B as it is for D vs F).
+##Test Proportional Odds Assumption:
+##Use the brant test or polr function from the MASS package in simpler models to check proportional odds:
+library(MASS)
+polr_model <- polr(GradeClass ~ Absences + StudyTimeWeekly + ..., data = data)
+summary(polr_model)
+brant(polr_model)
+
+#If the assumption is violated: Consider a partial proportional odds model or multinomial logistic regression (if ordinal structure is weak).
+
+
+
+###Consider Interaction Terms: GradeClass ~ ParentalSupport * ParentalEducation + ...
+
+#how did we do feature selection?
+#exchangability ~ if they're apriori exchangeable
+#also nice, prior sensitivity analysis

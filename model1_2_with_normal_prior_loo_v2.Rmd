@@ -1,0 +1,552 @@
+---
+title: "Bayesian Analysis on Loan Prediction Data"
+output: pdf_document
+date: "2024-12-31"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(modelr)
+library(tidybayes)
+library(dplyr)
+library(bayesplot)
+library(posterior)
+library(ggplot2)
+library(gridExtra)
+library(patchwork)
+library(brms)
+library(ROCR)
+```
+
+```{r}
+df <- read.csv('loan_approval_dataset.csv')
+head(df)
+```
+
+
+```{r}
+preprocess_data <- function(df) {
+
+  df$loan_id <- NULL
+
+  colnames(df)[which(names(df) == "income_annum")] <- "annual_income"
+  colnames(df)[which(names(df) == "cibil_score")] <- "credit_score"
+
+  cat("\n--- Dataset Info ---\n")
+  str(df)
+
+  cat("\n--- Missing Values ---\n")
+  missing_values <- colSums(is.na(df))
+  print(missing_values[missing_values > 0])
+
+  cat("\n--- Duplicate Rows ---\n")
+  duplicate_rows <- sum(duplicated(df))
+  cat("Number of duplicate rows:", duplicate_rows, "\n")
+
+  cat("\n--- Unique Values in Categorical Columns ---\n")
+  categorical_columns <- names(df)[sapply(df, is.factor) | sapply(df, is.character)]
+  for (col in categorical_columns) {
+    unique_vals <- unique(df[[col]])
+    cat(col, ":", length(unique_vals), "unique values\n", unique_vals, "\n")
+  }
+
+  return(df)
+}
+df <- preprocess_data(df)
+```
+```{r}
+summary(df)
+```
+
+
+```{r}
+df$education <- trimws(df$education)
+df$self_employed <- trimws(df$self_employed)
+df$loan_status <- trimws(df$loan_status)
+
+df$education <- ifelse(df$education == "Graduate", 1, 0)
+df$self_employed <- ifelse(df$self_employed == "Yes", 1, 0)
+df$loan_status <- ifelse(df$loan_status == "Approved", 1, 0)
+
+head(df)
+```
+
+
+
+```{r}
+min_max_scaler <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+df$no_of_dependents <- min_max_scaler(df$no_of_dependents)
+df$loan_term <- min_max_scaler(df$loan_term)
+
+df$annual_income <- scale(df$annual_income)
+df$credit_score <- scale(df$credit_score)
+
+log_columns <- c('loan_amount', 'residential_assets_value', 'commercial_assets_value',
+                 'luxury_assets_value', 'bank_asset_value')
+
+for (col in log_columns) {
+  df[[col]] <- ifelse(df[[col]] >= 0, log(df[[col]] + 1), NA) 
+}
+
+nan_inf_check <- sapply(df, function(x) sum(is.na(x) | is.infinite(x)))
+
+if (any(nan_inf_check > 0)) {
+  print("Columns with NaN or Inf values:")
+  print(nan_inf_check[nan_inf_check > 0])
+} else {
+  print("No NaN or Inf values found in the DataFrame.")
+}
+
+for (col in log_columns) {
+  median_value <- median(df[[col]], na.rm = TRUE)
+  df[[col]] <- ifelse(is.na(df[[col]]) | is.infinite(df[[col]]), median_value, df[[col]])
+}
+
+nan_inf_check_after <- sapply(df, function(x) sum(is.na(x) | is.infinite(x)))
+
+if (any(nan_inf_check_after > 0)) {
+  print("Columns with remaining NaN or Inf values:")
+  print(nan_inf_check_after[nan_inf_check_after > 0])
+} else {
+  print("No NaN or Inf values found after handling.")
+}
+
+head(df)
+```
+
+
+```{r}
+features <- c('annual_income', 'loan_amount', 'loan_term',
+              'credit_score', 'residential_assets_value', 
+              'commercial_assets_value', 'luxury_assets_value', 
+              'bank_asset_value')
+
+plots <- list()
+for (feature in features) {
+  data_to_plot <- df[[feature]]
+  p <- ggplot(data = data.frame(value = data_to_plot), aes(x = value)) +
+    geom_histogram(aes(y = ..density..), 
+                   fill = "blue", 
+                   color = "black", 
+                   bins = 20, 
+                   alpha = 0.5) +
+    geom_density(color = "red", size = 0.5) +
+    labs(title = paste(feature), 
+         x = feature, 
+         y = "Density") +
+    theme_minimal()+
+    theme(
+      plot.title = element_text(size = 8, face = "bold"),
+      axis.title = element_text(size = 6),
+      axis.text = element_text(size = 8)
+    )
+  plots[[feature]] <- p
+}
+plot_grid <- wrap_plots(plots, ncol = 3) + 
+  plot_layout(guides = 'collect') & theme(plot.margin = margin(5, 5, 5, 5))
+print(plot_grid)
+```
+
+
+
+```{r}
+features <- c('annual_income', 'loan_amount', 'no_of_dependents', 'loan_term',
+              'credit_score', 'residential_assets_value', 'commercial_assets_value',
+              'luxury_assets_value', 'bank_asset_value', 'education', 'self_employed')
+target <- 'loan_status'
+
+df[features] <- scale(df[features])
+```
+
+
+```{r}
+formula1 <- as.formula(paste(target, "~", paste(features, collapse = " + ")))
+
+prior1 <- set_prior("normal(0, 1)", class = "b") + 
+         set_prior("normal(0, 1)", class = "Intercept") 
+
+model1 <- brm(formula1, data = df, family = bernoulli(link = "logit"), prior = prior1, seed = 1234)
+```
+
+
+```{r}
+mcmc_trace(model1)
+```
+
+
+```{r}
+summary(model1)
+```
+
+
+
+```{r}
+m1_pred_prob <- apply(posterior_predict(model1), 2, mean)
+m1_pred_class <- ifelse(m1_pred_prob > 0.5, 1, 0)
+
+actual_class <- df[[target]]
+
+m1_conf_matrix <- table(Predicted = m1_pred_class, Actual = actual_class)
+
+m1_accuracy <- sum(diag(m1_conf_matrix)) / sum(m1_conf_matrix)
+m1_precision <- m1_conf_matrix[2, 2] / (m1_conf_matrix[2, 2] + m1_conf_matrix[1, 2])
+m1_recall <- m1_conf_matrix[2, 2] / (m1_conf_matrix[2, 2] + m1_conf_matrix[2, 1])
+m1_f1_score <- 2 * (m1_precision * m1_recall) / (m1_precision + m1_recall)
+
+cat("Accuracy:", round(m1_accuracy, 2), "\n")
+cat("Precision:", round(m1_precision, 2), "\n")
+cat("Recall:", round(m1_recall, 2), "\n")
+cat("F1 Score:", round(m1_f1_score, 2), "\n")
+```
+
+
+```{r}
+m1_conf_matrix_df <- as.data.frame(m1_conf_matrix)
+
+ggplot(m1_conf_matrix_df, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +  
+  geom_text(aes(label = Freq), vjust = 1) +  
+  scale_fill_gradient(low = "white", high = "steelblue") +  
+  labs(title = "Confusion Matrix", x = "Predicted Class", y = "Actual Class") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+m1_pred <- prediction(m1_pred_prob, actual_class)
+m1_perf <- performance(m1_pred, measure = "tpr", x.measure = "fpr")
+
+m1_auc_perf <- performance(m1_pred, measure = "auc")
+m1_auc_score <- as.numeric(m1_auc_perf@y.values)
+
+plot(
+  m1_perf,
+  col = "blue",
+  lwd = 2,
+  main = sprintf("ROC Curve (AUC = %.2f)", m1_auc_score)
+)
+
+abline(a = 0, b = 1, col = "red", lty = 2, lwd = 2)
+cat(sprintf("AUC Score: %.2f\n", m1_auc_score))
+```
+
+
+```{r}
+pp_check(model1, ndraws = 100)
+```
+
+
+```{r}
+set.seed(1234)
+sample_size <- 1000
+
+m1_prior_samples <- lapply(features, function(feature) {
+  rnorm(sample_size, mean = 0, sd = 1) 
+})
+names(m1_prior_samples) <- features
+
+m1_posterior_samples <- as_draws_df(model1)
+
+m1_plot_data <- bind_rows(
+  lapply(features, function(feature) {
+    
+    m1_prior_data <- data.frame(
+      Value = m1_prior_samples[[feature]],
+      Source = "Prior",
+      Feature = feature
+    )
+   
+    m1_posterior_data <- data.frame(
+      Value = m1_posterior_samples[[paste0("b_", feature)]],
+      Source = "Posterior",
+      Feature = feature
+    )
+    bind_rows(m1_prior_data, m1_posterior_data)
+  })
+)
+
+m1_plot_list <- lapply(unique(m1_plot_data$Feature), function(feature) {
+  ggplot(data = filter(m1_plot_data, Feature == feature), aes(x = Value, fill = Source)) +
+    geom_density(alpha = 0.5) +
+    labs(
+      title = feature,
+      x = "Value",
+      y = "Density",
+      fill = "Source"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 8, face = "bold"),
+      axis.title = element_text(size = 6),
+      axis.text = element_text(size = 8)
+    )
+})
+
+m1_plot_grid <- wrap_plots(m1_plot_list, ncol = 4) + 
+  plot_layout(guides = 'collect') & theme(plot.margin = margin(5, 5, 5, 5)) 
+
+options(repr.plot.width = 15, repr.plot.height = 10)
+
+print(m1_plot_grid)
+```
+
+
+
+```{r}
+m1_posterior_betas <- m1_posterior_samples %>%
+  select(starts_with("b_"))
+
+mcmc_areas(m1_posterior_betas, prob = 0.95) +
+  ggtitle("Posterior Densities of Beta Coefficients") +
+  theme_minimal()
+```
+
+
+
+
+```{r}
+m1_mse <- mean((actual_class - m1_pred_class)^2)
+cat("Mean Squared Error: ", m1_mse, "\n")
+```
+
+
+
+```{r}
+m1_loo <- loo(model1, save_psis = TRUE, cores = 4)
+print(m1_loo)
+```
+
+
+
+
+```{r}
+set.seed(42)
+kmeans_result <- kmeans(df[features], centers = 3, nstart = 25)
+
+df$loan_cluster <- kmeans_result$cluster
+
+cluster_counts <- table(df$loan_cluster)
+print(cluster_counts)
+```
+
+```{r}
+set.seed(42)
+kmeans_annual_income <- kmeans(df$annual_income, centers = 3, nstart = 25)
+kmeans_credit_score <- kmeans(df$credit_score, centers = 3, nstart = 25)
+
+df$annual_income_cluster <- kmeans_annual_income$cluster
+df$credit_score_cluster <- kmeans_credit_score$cluster
+
+df$annual_income_cluster_label <- ifelse(df$annual_income_cluster == 1, 'Low Income', 
+                                  ifelse(df$annual_income_cluster == 2, 'Medium Income', 'High Income'))
+
+df$credit_score_cluster_label <- ifelse(df$credit_score_cluster == 1, 'Low Risk', 
+                                ifelse(df$credit_score_cluster == 2, 'Medium Risk', 'High Risk'))
+```
+
+
+```{r}
+table(df$annual_income_cluster)
+table(df$credit_score_cluster)
+```
+
+
+```{r}
+df$loan_cluster <- as.factor(df$loan_cluster)
+df$annual_income_cluster <- as.factor(df$annual_income_cluster)
+df$credit_score_cluster <- as.factor(df$credit_score_cluster)
+```
+
+
+```{r}
+formula2 <- as.formula(paste(target, "~", paste(features, collapse = " + "), 
+                            "+ loan_cluster + annual_income_cluster + credit_score_cluster"))
+
+prior2 <- set_prior("normal(0, 1)", class = "b") + 
+         set_prior("normal(0, 1)", class = "Intercept") 
+prior_random_effects <- set_prior("normal(0, 1)", class = "sd")
+combined_prior <- prior + prior_random_effects
+
+model2 <- brm(formula2, data = df, family = bernoulli(link = "logit"), prior = prior2, seed = 1234)
+```
+
+
+```{r}
+mcmc_trace(model2)
+```
+
+
+
+```{r}
+summary(model2)
+```
+
+
+```{r}
+m2_pred_prob <- apply(posterior_predict(model2), 2, mean)
+m2_pred_class <- ifelse(m2_pred_prob > 0.5, 1, 0)
+
+actual_class <- df[[target]]
+
+m2_conf_matrix <- table(Predicted = m2_pred_class, Actual = actual_class)
+
+m2_accuracy <- sum(diag(m2_conf_matrix)) / sum(m2_conf_matrix)
+m2_precision <- m2_conf_matrix[2, 2] / (m2_conf_matrix[2, 2] + m2_conf_matrix[1, 2])
+m2_recall <- m2_conf_matrix[2, 2] / (m2_conf_matrix[2, 2] + m2_conf_matrix[2, 1])
+m2_f1_score <- 2 * (m2_precision * m2_recall) / (m2_precision + m2_recall)
+
+cat("Accuracy:", round(m2_accuracy, 2), "\n")
+cat("Precision:", round(m2_precision, 2), "\n")
+cat("Recall:", round(m2_recall, 2), "\n")
+cat("F1 Score:", round(m2_f1_score, 2), "\n")
+```
+
+
+```{r}
+m2_conf_matrix_df <- as.data.frame(m2_conf_matrix)
+
+ggplot(m2_conf_matrix_df, aes(x = Predicted, y = Actual, fill = Freq)) +
+  geom_tile(color = "white") +  
+  geom_text(aes(label = Freq), vjust = 1) +  
+  scale_fill_gradient(low = "white", high = "steelblue") +  
+  labs(title = "Confusion Matrix", x = "Predicted Class", y = "Actual Class") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+m2_pred <- prediction(m2_pred_prob, actual_class)
+m2_perf <- performance(m2_pred, measure = "tpr", x.measure = "fpr")
+
+m2_auc_perf <- performance(m2_pred, measure = "auc")
+m2_auc_score <- as.numeric(m2_auc_perf@y.values)
+
+plot(
+  m2_perf,
+  col = "blue",
+  lwd = 2,
+  main = sprintf("ROC Curve (AUC = %.2f)", m2_auc_score)
+)
+
+abline(a = 0, b = 1, col = "red", lty = 2, lwd = 2)
+cat(sprintf("AUC Score: %.2f\n", m2_auc_score))
+```
+
+
+```{r}
+pp_check(model2, ndraws = 100)
+```
+
+
+
+```{r}
+set.seed(1234)
+sample_size <- 1000
+
+m2_prior_samples <- lapply(c(features, "loan_cluster", "annual_income_cluster", "credit_score_cluster"), function(param) {
+  rnorm(sample_size, mean = 0, sd = 1) 
+})
+names(m2_prior_samples) <- c(features, "loan_cluster", "annual_income_cluster", "credit_score_cluster")
+
+m2_posterior_samples <- as_draws_df(model2)
+
+m2_plot_data <- bind_rows(
+  lapply(c(features, "loan_cluster", "annual_income_cluster", "credit_score_cluster"), function(param) {
+    if (param %in% features) {
+      posterior_col <- paste0("b_", param)
+      m2_prior_data <- data.frame(
+        Value = m2_prior_samples[[param]],
+        Source = "Prior",
+        Feature = param
+      )
+      m2_posterior_data <- data.frame(
+        Value = m2_posterior_samples[[posterior_col]],
+        Source = "Posterior",
+        Feature = param
+      )
+      bind_rows(m2_prior_data, m2_posterior_data)
+      
+    } else {
+      cluster_levels <- c(2, 3)
+      bind_rows(
+        lapply(cluster_levels, function(level) {
+          posterior_col <- paste0("b_", param, level)
+          m2_prior_data <- data.frame(
+            Value = m2_prior_samples[[param]],
+            Source = "Prior",
+            Feature = paste0(param, level)
+          )
+          m2_posterior_data <- data.frame(
+            Value = m2_posterior_samples[[posterior_col]],
+            Source = "Posterior",
+            Feature = paste0(param, level)
+          )
+          bind_rows(m2_prior_data, m2_posterior_data)
+        })
+      )
+    }
+  })
+)
+
+m2_plot_list <- lapply(unique(m2_plot_data$Feature), function(feature) {
+  ggplot(data = filter(m2_plot_data, Feature == feature), aes(x = Value, fill = Source)) +
+    geom_density(alpha = 0.5) +
+    labs(
+      title = feature,
+      x = "Value",
+      y = "Density",
+      fill = "Source"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 8, face = "bold"),
+      axis.title = element_text(size = 6),
+      axis.text = element_text(size = 8),
+      legend.title = element_text(size = 8),
+      legend.text = element_text(size = 8)
+    )
+})
+
+m2_plot_grid <- wrap_plots(m2_plot_list, ncol = 4) + 
+  plot_layout(guides = 'collect') & theme(plot.margin = margin(5, 5, 5, 5)) 
+
+options(repr.plot.width = 15, repr.plot.height = 10)
+
+print(m2_plot_grid)
+
+```
+
+
+
+```{r}
+m2_posterior_betas <- m2_posterior_samples %>%
+  select(starts_with("b_"))
+
+mcmc_areas(m2_posterior_betas, prob = 0.95) +
+  ggtitle("Posterior Densities of Beta Coefficients") +
+  theme_minimal()
+```
+
+
+
+```{r}
+m2_mse <- mean((actual_class - m2_pred_class)^2)
+cat("Mean Squared Error: ", m2_mse, "\n")
+```
+
+
+```{r}
+m2_loo <- loo(model2, save_psis = TRUE, cores = 4)
+print(m2_loo)
+```
+
+
+
+```{r}
+loo_compare(m1_loo, m2_loo)
+```
+

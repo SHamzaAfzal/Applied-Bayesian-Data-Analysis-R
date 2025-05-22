@@ -1,0 +1,72 @@
+---
+title: "multivariate"
+author: "HamzaAfzalAshraf"
+date: "2025-01-20"
+output: html_document
+---
+
+```{r}
+library(brms)
+
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+
+# Scale continuous predictors
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+priors <- c(
+  prior(normal(0, 0.5), class = "b"),                     # Stronger prior for regression coefficients
+  prior(student_t(3, 0, 2), class = "Intercept")          # Narrower prior for intercepts
+)
+
+```
+
+
+```{r}
+
+# Check the structure of GradeClass
+str(student_data$GradeClass)
+
+# Confirm the levels and encoding
+levels(student_data$GradeClass)
+head(student_data)
+```
+
+
+
+```{r}
+# Define the multivariate model
+multivariate_model <- brm(
+  mvbf(
+    GPA ~ Gender * ParentalSupport + StudyTimeWeekly_z + Absences_z + Sports + Music + Volunteering + 
+      (1 + Tutoring + Extracurricular | ParentalEducation),
+    GradeClass ~ Gender * ParentalSupport + StudyTimeWeekly_z + Absences_z + Sports + Music + Volunteering + 
+      (1 + Tutoring + Extracurricular | ParentalEducation)
+  ),
+  family = list(gaussian(), cumulative(link = "logit")),  # Gaussian for GPA, cumulative logit for GradeClass
+  data = student_data,
+  prior = priors,  # You can define priors for each outcome
+  iter = 4000,
+  warmup = 2000,
+  chains = 4,
+  cores = 8, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 35),
+  backend = "cmdstanr"
+)
+
+# Print the summary of the model
+summary(multivariate_model)
+
+```
+
+
+```{r}
+```
+

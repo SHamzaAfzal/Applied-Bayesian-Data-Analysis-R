@@ -1,0 +1,120 @@
+---
+title: "ABDA_Final_Version"
+author: "Zeynep Beyza Aktepe"
+date: "2025-01-24"
+output: html_document
+---
+
+```{r}
+library(brms)
+library(ggplot2)
+library(dplyr)
+```
+
+
+
+```{r}
+data <- read.csv("Student_performance.csv") # Standardize numeric predictors
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+
+# Standardizing the Study Habits variables
+data <- data %>%
+  mutate(
+    StudyTimeWeekly_scaled = scale(StudyTimeWeekly),
+    Absences_scaled = scale(Absences),
+    Tutoring_scaled = scale(Tutoring)
+  )
+# Creating a composite variable for Study Habits
+data <- data %>%
+  mutate(
+    StudyHabits = StudyTimeWeekly_scaled + Absences_scaled + Tutoring_scaled
+  )
+
+# Grouping StudyHabits into categories
+data <- data %>%
+  mutate(
+    StudyHabitsGroup = case_when(
+      StudyHabits <= -1.5 ~ "Low",
+      StudyHabits > -1.5 & StudyHabits <= 1.5 ~ "Medium",
+      StudyHabits > 1.5 ~ "High"
+    )
+  )
+
+formula = GradeClass ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + Ethnicity + (1 | StudyHabitsGroup)
+
+priors <- c(
+  set_prior("normal(0, 2)", class = "b"),          # Prior for fixed effects (StudyTimeWeekly, etc.)
+  set_prior("normal(0, 5)", class = "Intercept"),  # Prior for intercepts
+  set_prior("normal(0, 2)", class = "sd")         # Prior for random effects (Ethnicity)
+)
+# Fit the hierarchical model
+mdl_ord_sh_prior_def <- brm(
+  formula = formula,
+  family = cumulative(link = "logit"),  # Ordinal logistic regression
+  data = data,
+  prior = priors,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+
+summary(mdl_ord_sh_prior_def)
+```
+
+
+
+
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 1 & Sports == 1 & Music == 1 & Volunteering == 1 ~ "All Activities",
+      Extracurricular == 1 & Sports == 1 & Music == 1 & Volunteering == 0 ~ "All Except Volunteering",
+      Extracurricular == 1 & Sports == 0 & Music == 1 & Volunteering == 1 ~ "All Except Sports",
+      Extracurricular == 1 & Sports == 0 & Music == 0 & Volunteering == 1 ~ "All Except Music",
+      Extracurricular == 0 & Sports == 1 & Music == 1 & Volunteering == 1 ~ "All Except Extracurricular",
+      Extracurricular == 1 & Sports == 0 & Music == 0 & Volunteering == 0 ~ "Only Extracurricular",
+      Extracurricular == 0 & Sports == 1 & Music == 0 & Volunteering == 0 ~ "Only Sports",
+      Extracurricular == 0 & Sports == 0 & Music == 1 & Volunteering == 0 ~ "Only Music",
+      Extracurricular == 0 & Sports == 0 & Music == 0 & Volunteering == 1 ~ "Only Volunteering",
+      Extracurricular == 0 & Sports == 0 & Music == 0 & Volunteering == 0 ~ "No Activities",
+      TRUE ~ "Other"
+    )
+  )
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+
+priors <- c(
+  prior(normal(0, 0.5), class = "b"),                     # Stronger prior for regression coefficients
+  prior(student_t(3, 0, 2), class = "Intercept")          # Narrower prior for intercepts
+)
+
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+mdl_cnt_ag_prior_ <- brm(
+  formula = formula,
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+
+# Print a summary of the model
+summary(mdl_cnt_ag_prior_)
+
+```

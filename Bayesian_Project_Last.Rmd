@@ -1,0 +1,798 @@
+---
+title: "Bayesian Project Last"
+author: "Zeynep Beyza Aktepe"
+date: "2025-01-25"
+output: html_document
+---
+
+```{r}
+library(brms)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+data <- read.csv("Student_performance.csv") # Standardize numeric predictors
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Standardizing the Study Habits variables
+data <- data %>%
+  mutate(
+    StudyTimeWeekly_scaled = scale(StudyTimeWeekly),
+    Absences_scaled = scale(Absences),
+    Tutoring_scaled = scale(Tutoring)
+  )
+
+# Creating a composite variable for Study Habits
+data <- data %>%
+  mutate(
+    StudyHabits = StudyTimeWeekly_scaled + Absences_scaled + Tutoring_scaled
+  )
+
+# Grouping StudyHabits into categories
+data <- data %>%
+  mutate(
+    StudyHabitsGroup = case_when(
+      StudyHabits <= -1.5 ~ "Low",
+      StudyHabits > -1.5 & StudyHabits <= 1.5 ~ "Medium",
+      StudyHabits > 1.5 ~ "High"
+    )
+  )
+
+formula = GradeClass ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + Ethnicity + (1 | StudyHabitsGroup)
+```
+
+1) Prior Sensitivity Analysis for StudyHabits:
+
+We should focus on changing the prior for regression coefficients while keeping the prior for random effects constant. This way, we isolate the impact of different priors on the regression coefficients.
+```{r}
+# Narrower Prior (More informative):
+priors_alt1 <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Narrow prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Same prior for random effects (Level)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+
+# Broader Prior (Weakly informative):
+priors_alt2 <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Same prior for random effects (Level)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+```
+
+Fit two versions of the model, keeping all settings the same except for the prior on the regression coefficients.
+```{r}
+mdl_cnt_sh_prior_def_alt1 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+    Ethnicity + (1 | StudyHabitsGroup),
+  family = "gaussian",
+  data = data,
+  prior = priors_alt1,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+```
+
+```{r}
+mdl_cnt_sh_prior_def_alt2 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+    Ethnicity + (1 | StudyHabitsGroup),
+  family = "gaussian",
+  data = data,
+  prior = priors_alt2,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+```
+
+Extract and compare posterior summaries for key parameters across the two models.
+```{r}
+# Summaries for the hierarchical models
+summary_alt1 <- summary(mdl_cnt_sh_prior_def_alt1)$fixed
+summary_alt2 <- summary(mdl_cnt_sh_prior_def_alt2)$fixed
+
+# Combine summaries into a single table
+sensitivity_summary <- bind_rows(
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the summary
+print(sensitivity_summary)
+```
+
+Visualize the posterior distributions of key regression coefficients (e.g., Absences, StudyTimeWeekly) across the two models.
+```{r}
+# Extract posterior samples
+posterior_alt1 <- posterior_samples(mdl_cnt_sh_prior_def_alt1)
+posterior_alt2 <- posterior_samples(mdl_cnt_sh_prior_def_alt2)
+
+# Combine posterior samples for visualization
+posterior_combined <- bind_rows(
+  posterior_alt1 %>% mutate(Model = "Alt1"),
+  posterior_alt2 %>% mutate(Model = "Alt2")
+)
+
+# Plot posterior densities for a key parameter (e.g., "b_ParentalSupport")
+library(ggridges)
+ggplot(posterior_combined, aes(x = b_ParentalSupport, y = Model, fill = Model)) +
+  geom_density_ridges(alpha = 0.5) +
+  labs(title = "Prior Sensitivity Analysis: Effect of Parental Support",
+       x = "Posterior Estimate", y = "Model") +
+  theme_minimal()
+
+# Repeat for other predictors if needed
+```
+
+Run posterior predictive checks for both models to compare how well they predict the observed data.
+```{r}
+# Posterior predictive checks for the first model
+pp_check(mdl_cnt_sh_prior_def_alt1, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Narrower Priors (Alt1)")
+
+# Posterior predictive checks for the second model
+pp_check(mdl_cnt_sh_prior_def_alt2, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Broader Priors (Alt2)")
+
+
+#pp_check(mdl_cnt_sh_prior_def_alt1, type = "bars")+
+#  ggtitle("Posterior Predictive Check: Narrower Priors (Alt1)")
+
+#pp_check(mdl_cnt_sh_prior_def_alt2, type = "bars") +
+#  ggtitle("Posterior Predictive Check: Broader Priors (Alt2)")
+```
+
+
+```{r}
+pp_check(mdl_cnt_sh_prior_def_alt1, type = "error_scatter_avg")
+pp_check(mdl_cnt_sh_prior_def_alt2, type = "error_scatter_avg")
+```
+
+
+
+Use Leave-One-Out Cross-Validation (LOO) to compare predictive performance between the two models.
+```{r}
+# Compute LOO for both models
+loo_alt1 <- loo(mdl_cnt_sh_prior_def_alt1)
+loo_alt2 <- loo(mdl_cnt_sh_prior_def_alt2)
+
+# Compare the models
+loo_comparison <- loo_compare(loo_alt1, loo_alt2)
+print(loo_comparison)
+```
+
+1. Comparison of Models (ELPD Results):
+- The elpd_diff (Expected Log Predictive Density difference) is very close between priors_alt1 and priors_alt2, with a difference of only -0.1 in favor of priors_alt2. This value, combined with its small standard error (se_diff = 0.1), suggests that the predictive performance of both models is essentially equivalent.
+- Since the difference is negligible, neither model shows a clear advantage in terms of predictive performance.
+
+2. Posterior Predictive Checks:
+- The posterior predictive checks for priors_alt1 and priors_alt2 both show that the models capture the overall shape of the observed data (y) well.
+- However, priors_alt2 appears to allow for slightly greater variability in the posterior predictions (y_rep), which is consistent with the broader priors used for regression coefficients. This flexibility might better reflect uncertainty in the model.
+
+3. Effect of Parental Support (Posterior Density):
+- The prior sensitivity analysis for the effect of Parental Support shows that the posterior distributions under priors_alt1 and priors_alt2 are similar but not identical. priors_alt1 leads to a slightly more peaked posterior (higher certainty), while priors_alt2 results in a flatter posterior (more uncertainty).
+- This indicates that the prior specification influences the degree of shrinkage and uncertainty in the posterior estimates.
+
+4. Interpretation of Regression Coefficients (Table Results):
+- Across the models, the regression coefficients (Estimate) and their uncertainties (Est.Error, CI) remain consistent, though priors_alt2 allows for slightly wider credible intervals, reflecting the broader prior.
+
+# Based on the provided results and interpretations, I recommend priors_alt2 (Broader Priors) as the final choice.
+
+Reasons:
+- Predictive Performance: The elpd_diff difference is negligible (-0.1), meaning both models perform similarly in predicting the data. There's no strong evidence that priors_alt1 outperforms priors_alt2 in prediction.
+- Flexibility and Uncertainty: priors_alt2 allows for more flexibility and accounts for greater uncertainty in the model. This is particularly important if you have less confidence in the prior information or want the data to play a larger role in determining the results.
+- Posterior Predictive Checks: The broader priors in priors_alt2 result in more realistic uncertainty in predictions (y_rep), which may be better suited for capturing variability in the data.
+
+By using broader priors, you avoid overly constraining the model, and it better reflects the potential variability and uncertainty inherent in real-world data. This is a cautious yet balanced approach.
+
+# use 'priors_alt2'
+
+2) Final Model for StudyHabits:
+```{r}
+data <- read.csv("Student_performance.csv") # Standardize numeric predictors
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+
+# Standardizing the Study Habits variables
+data <- data %>%
+  mutate(
+    StudyTimeWeekly_scaled = scale(StudyTimeWeekly),
+    Absences_scaled = scale(Absences),
+    Tutoring_scaled = scale(Tutoring)
+  )
+# Creating a composite variable for Study Habits
+data <- data %>%
+  mutate(
+    StudyHabits = StudyTimeWeekly_scaled + Absences_scaled + Tutoring_scaled
+  )
+
+# Grouping StudyHabits into categories
+data <- data %>%
+  mutate(
+    StudyHabitsGroup = case_when(
+      StudyHabits <= -1.5 ~ "Low",
+      StudyHabits > -1.5 & StudyHabits <= 1.5 ~ "Medium",
+      StudyHabits > 1.5 ~ "High"
+    )
+  )
+
+formula = GPA  ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + Ethnicity + (1 | StudyHabitsGroup)
+
+priors <- c(
+  set_prior("normal(0, 10)", class = "b"),
+  set_prior("cauchy(0, 1)", class = "sd"),
+  set_prior("student_t(3, 0, 2)", class = "Intercept")
+)
+
+# Fit the hierarchical model
+mdl_cnt_sh_prior_def <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+    Ethnicity + (1 | StudyHabitsGroup),
+  family = "gaussian",
+  data = data,
+  prior = priors,
+  cores = 8, 
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"  
+)
+
+summary(mdl_cnt_sh_prior_def)
+```
+
+
+```{r}
+pp_check(mdl_cnt_sh_prior_def, type = "error_scatter_avg")
+```
+
+
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "1",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "2",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "3",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "4",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "5",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "6",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "7",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "8",
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 1	 ~ "9",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 1   ~ "10",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "11",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "12",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "13",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "14",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "15",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "16",
+      TRUE ~ NA_character_
+    )
+  )
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+```
+
+3) Prior Sensitivity Analysis for ActivityGroup:
+
+We should focus on changing the prior for regression coefficients while keeping the prior for random effects constant. This way, we isolate the impact of different priors on the regression coefficients.
+```{r}
+priors_alt1 <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Tight prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercept
+)
+
+priors_alt2 <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+```
+
+Fit two versions of the model, keeping all settings the same except for the prior on the regression coefficients.
+```{r}
+mdl_cnt_ag_prior_alt1 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | ActivityGroup),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors_alt1,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r}
+mdl_cnt_ag_prior_alt2 <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | ActivityGroup),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors_alt2,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+Extract and compare posterior summaries for key parameters across the two models.
+```{r}
+# Summaries for the hierarchical models
+summary_alt1 <- summary(mdl_cnt_ag_prior_alt1)$fixed
+summary_alt2 <- summary(mdl_cnt_ag_prior_alt2)$fixed
+
+# Combine summaries into a single table
+sensitivity_summary <- bind_rows(
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the summary
+print(sensitivity_summary)
+```
+
+Visualize the posterior distributions of key regression coefficients (e.g., Absences, StudyTimeWeekly) across the two models.
+```{r}
+# Extract posterior samples
+posterior_alt1 <- posterior_samples(mdl_cnt_ag_prior_alt1)
+posterior_alt2 <- posterior_samples(mdl_cnt_ag_prior_alt2)
+
+# Combine posterior samples for visualization
+posterior_combined <- bind_rows(
+  posterior_alt1 %>% mutate(Model = "Alt1"),
+  posterior_alt2 %>% mutate(Model = "Alt2")
+)
+
+# Plot posterior densities for a key parameter (e.g., "b_ParentalSupport")
+library(ggridges)
+ggplot(posterior_combined, aes(x = b_ParentalSupport, y = Model, fill = Model)) +
+  geom_density_ridges(alpha = 0.5) +
+  labs(title = "Prior Sensitivity Analysis: Effect of Parental Support",
+       x = "Posterior Estimate", y = "Model") +
+  theme_minimal()
+
+# Repeat for other predictors if needed
+```
+
+Run posterior predictive checks for both models to compare how well they predict the observed data.
+```{r}
+# Posterior predictive checks for the first model
+pp_check(mdl_cnt_ag_prior_alt1, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Narrower Priors (Alt1)")
+
+# Posterior predictive checks for the second model
+pp_check(mdl_cnt_ag_prior_alt2, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check: Broader Priors (Alt2)")
+```
+
+```{r}
+pp_check(mdl_cnt_ag_prior_alt1, type = "error_scatter_avg")
+
+
+pp_check(mdl_cnt_ag_prior_alt2, type = "error_scatter_avg")
+```
+
+
+Use Leave-One-Out Cross-Validation (LOO) to compare predictive performance between the two models.
+```{r}
+# Compute LOO for both models
+loo_alt1 <- loo(mdl_cnt_ag_prior_alt1)
+loo_alt2 <- loo(mdl_cnt_ag_prior_alt2)
+
+# Compare the models
+loo_comparison <- loo_compare(loo_alt1, loo_alt2)
+print(loo_comparison)
+```
+
+
+1. Comparison of Models (ELPD Results):
+- The elpd_diff (Expected Log Predictive Density difference) between mdl_cnt_ag_prior_alt1 (narrow priors) and mdl_cnt_ag_prior_alt2 (broad priors) is exactly 0.0 with a small standard error (se_diff = 0.1).
+- This indicates that the predictive performance of both models is identical within the range of uncertainty. Neither model shows any clear advantage.
+
+2. Posterior Predictive Checks:
+- Both priors_alt1 (narrow priors) and priors_alt2 (broad priors) demonstrate good alignment between the observed data (y) and the model predictions (y_rep).
+- priors_alt2 allows for slightly more variability in the predictions, consistent with broader priors, which may better reflect model uncertainty.
+- priors_alt1 has tighter predictions, reflecting the influence of narrower priors that constrain parameter estimates more strongly.
+
+3. Effect of Parental Support (Posterior Density):
+- The posterior distributions for Parental Support are very close but not identical:
+-- priors_alt1 (narrow priors): Results in a more peaked distribution, reflecting greater certainty but more constrained estimates.
+-- priors_alt2 (broad priors): Produces a flatter distribution, allowing for more uncertainty in the estimate.
+- This suggests that the broader priors provide more flexibility in capturing uncertainty, while narrower priors enforce stronger regularization.
+
+4. Choice and Recommendation:
+- Predictive Performance: Since the elpd_diff is identical (0.0), predictive accuracy does not favor one model over the other.
+- Flexibility and Uncertainty: priors_alt2 (broad priors) is recommended because it allows for greater flexibility and accounts for more uncertainty, particularly when prior knowledge about regression coefficients is less certain.
+- Posterior Predictive Checks: The broader priors of priors_alt2 result in slightly more realistic uncertainty in predictions, which may be better for capturing variability in the data.
+
+# Final Recommendation: Use priors_alt2 (Broader Priors).
+This cautious choice ensures that the model is less constrained by strong prior assumptions, reflecting potential variability and uncertainty in real-world data.
+
+# use 'priors_alt2'
+```{r}
+summary(mdl_cnt_ag_prior_alt2)
+```
+
+4) Final Model for ActivityGroup:
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "1",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "2",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "3",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "4",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "5",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "6",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "7",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "8",
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 1	 ~ "9",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 1   ~ "10",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "11",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "12",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "13",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "14",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "15",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "16",
+      TRUE ~ NA_character_
+    )
+  )
+
+sum(is.na(data$ActivityGroup))
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+
+priors <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+mdl_cnt_ag_prior <- brm(
+  formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | ActivityGroup),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+
+# Print a summary of the model
+summary(mdl_cnt_ag_prior)
+
+```
+```{r}
+summary(mdl_cnt_ag_prior)
+```
+
+```{r}
+#plot(conditional_effects(mdl_cnt_ag_prior), points = TRUE)
+```
+
+```{r}
+pp_check(mdl_cnt_ag_prior, type = "dens_overlay") +
+  ggtitle("Posterior Predictive Check:")
+```
+
+
+```{r}
+pp_check(mdl_cnt_ag_prior, type = "error_scatter_avg")
+```
+
+
+5) Ordinal Model for ActivityGroup:
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "1",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "2",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "3",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "4",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "5",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "6",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "7",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "8",
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 1	 ~ "9",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 1   ~ "10",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "11",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "12",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "13",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "14",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "15",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "16",
+      TRUE ~ NA_character_
+    )
+  )
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE) # Ordinal
+ 
+
+formula = GradeClass  ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+
+priors <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+mdl_ord_ag_prior <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + 
+    Ethnicity + (1 | ActivityGroup),
+  family = cumulative(link = "logit"),   # ordinal family logit as link function
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r}
+summary(mdl_ord_ag_prior)
+```
+
+```{r}
+#plot(conditional_effects(mdl_ord_ag_prior), points = TRUE)
+```
+
+```{r}
+pp_check(mdl_ord_ag_prior, type = "error_scatter_avg")
+```
+```{r}
+pp_check(mdl_ord_ag_prior, type = "bars")
+```
+
+
+```{r}
+plot(conditional_effects(mdl_cnt_ag_prior), points = TRUE)
+```
+
+
+
+```{r}
+summary(mdl_cnt_ag_prior)
+waic(mdl_cnt_ag_prior)
+```
+
+
+```{r}
+plot(conditional_effects(mdl_ord_ag_prior), points = TRUE)
+```
+
+```{r}
+summary(mdl_ord_ag_prior)
+waic(mdl_ord_ag_prior)
+```
+
+
+```{r}
+# Calculate WAIC and LOO for both models
+waic_ord <- waic(mdl_ord_ag_prior)
+waic_cnt <- waic(mdl_cnt_ag_prior)
+
+loo_ord <- loo(mdl_ord_ag_prior)
+loo_cnt <- loo(mdl_cnt_ag_prior)
+
+# Calculate Bayes R2
+bayes_r2_ord <- bayes_R2(mdl_ord_ag_prior)
+bayes_r2_cnt <- bayes_R2(mdl_cnt_ag_prior)
+
+# Print results
+cat("Model 1 (Ordinal):\n")
+print(waic_ord)
+print(loo_ord)
+print(bayes_r2_ord)
+
+cat("\nModel 2 (Continuous):\n")
+print(waic_cnt)
+print(loo_cnt)
+print(bayes_r2_cnt)
+```
+```{r}
+
+# Print results
+cat("Model 1 (Ordinal):\n")
+print(waic_ord)
+print(loo_ord)
+print(bayes_r2_ord)
+
+```
+
+
+```{r}
+
+cat("\nModel 2 (Continuous):\n")
+print(waic_cnt)
+print(loo_cnt)
+print(bayes_r2_cnt)
+```
+
+
+11) refined model:
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "1",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "2",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "3",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "4",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "5",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "6",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "7",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "8",
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 1	 ~ "9",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 1   ~ "10",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "11",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "12",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "13",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "14",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "15",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "16",
+      TRUE ~ NA_character_
+    )
+  )
+
+sum(is.na(data$ActivityGroup))
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+
+priors <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+mdl_cnt_ag_prior_refined <- brm(
+  formula = GPA ~ ParentalSupport + StudyTimeWeekly + Absences + Tutoring + (1 | ActivityGroup),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+
+# Print a summary of the model
+summary(mdl_cnt_ag_prior_refined)
+
+```
+
+```{r}
+plot(conditional_effects(mdl_cnt_ag_prior_refined), points = TRUE)
+```
+```{r}
+pp_check(mdl_cnt_ag_prior_refined, type = "dens_overlay")
+```
+
+
+12) refined model:
+```{r}
+# Read in your dataset
+data <- read.csv("Student_performance.csv")
+data <- data %>%
+  mutate(
+    ActivityGroup = case_when(
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "1",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 0	 ~ "2",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "3",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 0	 ~ "4",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "5",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 0	 ~ "6",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "7",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 0	 ~ "8",
+      Extracurricular == 0	 & Sports == 0	 & Music == 0	 & Volunteering == 1	 ~ "9",
+      Extracurricular == 1	 & Sports == 0	 & Music == 0	 & Volunteering == 1   ~ "10",
+      Extracurricular == 0	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "11",
+      Extracurricular == 1	 & Sports == 1	 & Music == 0	 & Volunteering == 1	 ~ "12",
+      Extracurricular == 0	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "13",
+      Extracurricular == 1	 & Sports == 0	 & Music == 1	 & Volunteering == 1	 ~ "14",
+      Extracurricular == 0	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "15",
+      Extracurricular == 1	 & Sports == 1	 & Music == 1	 & Volunteering == 1	 ~ "16",
+      TRUE ~ NA_character_
+    )
+  )
+
+sum(is.na(data$ActivityGroup))
+# Scale continuous predictors
+data$StudyTimeWeekly_z <- scale(data$StudyTimeWeekly)
+data$Absences_z <- scale(data$Absences)
+
+formula = GPA ~ Gender + ParentalEducation + ParentalSupport + StudyTimeWeekly + Absences + Tutoring + Ethnicity + (1 | ActivityGroup)
+
+priors <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Broad prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Random effects prior (same as previous)
+  set_prior("student_t(3, 0, 10)", class = "Intercept")  # Weakly informative prior for intercept
+)
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+mdl_cnt_ag_prior_bad <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + ParentalSupport + Tutoring + 
+    Ethnicity + (1 | ActivityGroup),
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+
+# Print a summary of the model
+summary(mdl_cnt_ag_prior_bad)
+
+```
+
+```{r}
+plot(conditional_effects(mdl_cnt_ag_prior_bad), points = TRUE)
+```
+
+```{r}
+pp_check(mdl_cnt_ag_prior_bad, type = "dens_overlay")
+```
+
+
+
+
+
+
+
+
+
+
+

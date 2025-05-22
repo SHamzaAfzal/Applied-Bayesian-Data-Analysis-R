@@ -1,0 +1,608 @@
+---
+title: "ABDA Hiereichical"
+author: "HamzaAfzalAshraf"
+date: "2025-01-14"
+output: html_document
+---
+
+```{r}
+#Number of columns
+
+colnames(read.csv("Student_performance_data.csv"))
+```
+```{r}
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+```
+
+```{r}
+print(student_data$GradeClass)
+sum(is.na(student_data$GradeClass)) 
+```
+
+
+```{r}
+# Load required libraries
+library(brms)
+
+
+# Load the dataset (adjust the file path as necessary)
+student_data <- read.csv("Student_performance_data.csv")
+
+
+
+# check prior assumptions
+table(student_data$Ethnicity)
+table(student_data$ParentalEducation)
+
+  
+
+```
+## inequal priors, means there's no exchangeability. Should work on fixing the priors.
+
+```{r}
+library(brms)
+library(ggplot2)
+
+```
+
+```{r}
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+# Define the hierarchical model formula with nested effects
+formula <- GradeClass ~ Age_z + StudyTimeWeekly_z + Absences_z + Gender + 
+           Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+           (1 | Ethnicity/ParentalEducation)
+
+# Specify priors
+priors <- c(
+  set_prior("normal(0, 2)", class = "Intercept"),       # Prior for intercept
+  set_prior("normal(0, 1)", class = "b"),              # Prior for fixed effects
+  set_prior("student_t(3, 0, 5)", class = "sd")        # Prior for random effects
+)
+
+# Fit the Bayesian hierarchical model
+model <- brm(
+  formula = formula,
+  family = "cumulative",   # Ordered logistic regression for ordinal outcome
+  data = student_data,
+  prior = priors,
+  chains = 4,              # Number of chains
+  iter = 4000,             # Total iterations
+  warmup = 2000,           # Warmup iterations
+  control = list(adapt_delta = 0.99, max_treedepth = 15)  # Adjust control settings
+)
+
+# Print a summary of the model
+summary(model)
+
+
+# Visualize convergence and posterior distributions
+plot(model)
+
+
+```
+# result analysis from the above: Students with higher study time and parental support are more likely to achieve better grades, while frequent absences and lack of extracurricular engagement are associated with poorer performance.
+```{r}
+pp_check(model)
+```
+
+```{r}
+pairs(model, pars = c("b_Intercept", "sd_Intercept", "Age_z"))
+
+```
+
+#SAVE THE MODEL
+```{r}
+# Optional: Save the model for future use
+saveRDS(model, "Bayesian_Student_Grade_First_Model.rds")
+```
+
+```{r}
+# Convert GradeClass to a factor, maintaining the correct order: "A" (best) to "F" (worst)
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Convert GradeClass to numeric values (1 for A, 2 for B, etc.)
+numeric_grades <- as.numeric(student_data$GradeClass)
+
+# Ensure breaks span the range of both observed and posterior predictive data
+breaks <- seq(0.5, 5.5, by = 1)  # Adjust to have bins between the grades
+
+# Plot the histogram for observed grades
+hist(numeric_grades, breaks = breaks, col = "black", 
+     main = "Observed vs Posterior Predictive Grades",
+     xlab = "Grade Class", ylab = "Frequency", xaxt = "n", freq = TRUE)
+
+# Add custom labels for the x-axis corresponding to the correct grades
+axis(1, at = 1:5, labels = c("F", "D", "C", "B", "A"))
+
+# Overlay Posterior Predictive Samples (assuming you have 'y_rep')
+for (i in 1:nrow(y_rep)) {
+  # Assuming y_rep is already the correct numeric representation
+  hist(y_rep[i, ], breaks = breaks, col = "red", 
+       add = TRUE, freq = TRUE)
+}
+
+# Add a legend
+legend("topright", legend = c("Observed Grades", "Posterior Predictive"), 
+       fill = c("black", "red"))
+
+
+# Print observed grades frequency
+print("Observed Grades Frequency:")
+observed_grades_table <- table(numeric_grades)
+print(observed_grades_table)
+
+# Print posterior predictive grades frequency
+print("Posterior Predictive Grades Frequency:")
+posterior_predictive_grades <- apply(y_rep, 2, function(x) floor(median(x)))
+posterior_grades_table <- table(posterior_predictive_grades)
+print(posterior_grades_table)
+
+```
+
+
+
+##Significant Predictors:
+
+#StudyTimeWeekly_z (-0.62): Negative relationship with grade class, indicating that as study time increases, the probability of being in a higher grade class decreases (likely due to overcompensation by weaker students).
+#Absences_z (3.33): Strong positive association, suggesting that higher absences significantly increase the likelihood of being in a lower grade class.
+#Tutoring (-0.99): Negative effect, implying that students receiving tutoring are more likely to belong to a lower grade class (possibly because they already struggle academically).
+#ParentalSupport (-0.59): Negative effect, indicating that less parental support is linked with lower grades.
+#Extracurricular (-0.71): Participating in extracurricular activities correlates with a lower grade class, potentially reflecting time trade-offs.
+#Sports (-0.75): Similarly, involvement in sports correlates with lower grades.
+#Music (-0.45): Participation in music has a smaller but still negative association with grade class.
+
+
+##Non-Significant Predictors:
+
+#Age_z (0.02): Credible interval includes zero, suggesting no strong evidence for a relationship.
+#Gender (-0.07): Minimal effect with CI including zero, indicating it may not be a meaningful predictor.
+#Volunteering (0.14): Positive coefficient, but the CI includes zero, making it insignificant.
+
+
+```{r}
+# Histogram of StudyTimeWeekly
+hist(student_data$StudyTimeWeekly, col = "purple", main = "Histogram of Study Time (Weekly)", 
+     xlab = "Study Time (Hours)", ylab = "Frequency", breaks = 10)
+
+```
+
+
+```{r}
+# Optional: Save the model for future use
+saveRDS(model, "Bayesian_Student_Grade_Model_second.rds")
+
+```
+
+
+
+
+
+```{r}
+# Extract the posterior predictive samples from the model
+posterior_predictiv <- posterior_predict(model)
+
+
+
+```
+
+
+
+
+```{r}
+#better grouping
+
+# Load required libraries
+library(brms)
+
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+# Create a new variable for activity group (Active or Inactive based on participation)
+student_data$ActivityGroup <- with(student_data, 
+                                    ifelse(Extracurricular == 1 | Sports == 1 | Music == 1 | Volunteering == 1, 
+                                           "Active", "Inactive"))
+
+# studytime on absences to know if studs are making up for lost time
+formula <- GradeClass ~ StudyTimeWeekly_z * Absences_z + Gender + 
+           ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+           (1 + StudyTimeWeekly_z + Absences_z | Tutoring) + 
+           (1 | ActivityGroup)  # Random intercept for ActivityGroup
+
+# Specify priors
+priors <- c(
+  set_prior("normal(0, 2)", class = "Intercept"),       # Prior for intercept
+  set_prior("normal(0, 1)", class = "b"),              # Prior for fixed effects
+  set_prior("student_t(3, 0, 5)", class = "sd"),        # Prior for random effects
+  set_prior("normal(0, 1)", class = "sd", group = "Tutoring"),  # Random effects for Tutoring
+  set_prior("normal(0, 1)", class = "sd", group = "ActivityGroup")  # Random effects for ActivityGroup
+)
+
+# Fit the Bayesian hierarchical model
+model <- brm(
+  formula = formula,
+  family = "cumulative",   # Ordered logistic regression for ordinal outcome
+  data = student_data,
+  prior = priors,
+  chains = 4,              # Number of chains
+  iter = 2000,             # Total iterations
+  warmup = 1000,           # Warmup iterations
+  control = list(adapt_delta = 0.99, max_treedepth = 15)  # Adjust control settings
+)
+
+# Print a summary of the model
+summary(model)
+
+
+```
+
+```{r}
+# Visualize convergence and posterior distributions
+plot(model)
+
+
+```
+
+```{r}
+# Optional: Save the model for future use
+saveRDS(model, "Model2OrderedLogisticRegressionforOrdinal.rds")
+```
+
+
+
+
+```{r}
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Convert GradeClass to GPA (continuous)
+# Assuming you already have GPA in the dataset (if not, you need to calculate it)
+# GPA is expected to be continuous (e.g., 0 to 4 scale)
+# For this example, let's assume GPA is already present in the dataset
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+# Create a new variable for activity group (Active or Inactive based on participation)
+student_data$ActivityGroup <- with(student_data, 
+                                    ifelse(Extracurricular == 1 | Sports == 1 | Music == 1 | Volunteering == 1, 
+                                           "Active", "Inactive"))
+
+# Multilevel formula for GPA as continuous
+formula <- GPA ~ StudyTimeWeekly_z * Absences_z + Gender + 
+           ParentalSupport + Extracurricular + Sports + Music + Volunteering + 
+           (1 + StudyTimeWeekly_z + Absences_z | Tutoring) + 
+           (1 | ActivityGroup)  # Random intercept for ActivityGroup
+
+# Specify priors
+priors <- c(
+  set_prior("normal(0, 2)", class = "Intercept"),       # Prior for intercept
+  set_prior("normal(0, 1)", class = "b"),               # Prior for fixed effects
+  set_prior("student_t(3, 0, 5)", class = "sd"),        # Prior for random effects
+  set_prior("normal(0, 1)", class = "sd", group = "Tutoring"),  # Random effects for Tutoring
+  set_prior("normal(0, 1)", class = "sd", group = "ActivityGroup")  # Random effects for ActivityGroup
+)
+
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+model_continuous <- brm(
+  formula = formula,
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = student_data,
+  prior = priors,
+  chains = 4,              # Number of chains
+  iter = 2000,             # Total iterations
+  warmup = 1000,           # Warmup iterations
+  control = list(adapt_delta = 0.99, max_treedepth = 15)  # Adjust control settings
+)
+
+# Print a summary of the model
+summary(model_continuous)
+
+```
+```{r}
+# Optional: Save the model for future use
+saveRDS(model_continuous, "Model1GaussianForContinuous.rds")
+```
+
+```{r}
+summary(model_continuous)
+
+```
+
+
+```{r}
+# Generate posterior predictive samples
+pp_samples <- posterior_predict(model_continuous)
+
+# Visualize PPC
+library(bayesplot)
+pp_check(model_continuous, ndraws = 100) # Overlay simulated data with observed data
+
+# Histograms of predictions
+pp_check(model_continuous, type = "hist", ndraws = 100)
+
+# Compare means or other summary statistics
+pp_check(model_continuous, type = "stat", stat = "mean")
+pp_check(model_continuous, type = "stat", stat = "sd")
+
+```
+
+
+
+```{r}
+# Generate posterior predictive samples
+pp_samples <- posterior_predict(model)
+
+# Visualize PPC
+library(bayesplot)
+pp_check(model, ndraws = 100) # Overlay simulated data with observed data
+
+# Histograms of predictions
+pp_check(model, type = "hist", ndraws = 100)
+
+# Compare means or other summary statistics
+pp_check(model, type = "stat", stat = "mean")
+pp_check(model, type = "stat", stat = "sd")
+
+```
+
+```{r}
+library(brms)
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Preprocessing Steps
+
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+# Create a new variable for activity group (Active or Inactive)
+student_data$ActivityGroup <- with(student_data, 
+                                    ifelse(Extracurricular == 1 | Sports == 1 | Music == 1 | Volunteering == 1, 
+                                           "Active", "Inactive"))
+
+# Ensure ActivityGroup is a factor
+student_data$ActivityGroup <- factor(student_data$ActivityGroup)
+
+# Model Specification
+
+# Define refined priors (without the disc parameter)
+refined_priors <- c(
+  prior(normal(0.2, 0.1), class = "b", coef = "StudyTimeWeekly_z"),
+  prior(normal(-1.0, 0.5), class = "b", coef = "Absences_z"),
+  prior(normal(0, 0.5), class = "b", coef = "StudyTimeWeekly_z:Absences_z"),
+  prior(normal(0, 0.1), class = "b", coef = "Gender"),
+  prior(normal(0.5, 0.1), class = "b", coef = "ParentalSupport"),
+  prior(normal(0.5, 0.2), class = "b", coef = "Extracurricular"),
+  prior(normal(0.5, 0.2), class = "b", coef = "Sports"),
+  prior(normal(0.3, 0.2), class = "b", coef = "Music"),
+  prior(normal(0, 0.2), class = "b", coef = "Volunteering"),
+  prior(student_t(3, 0, 1), class = "sd", group = "ActivityGroup"),
+  prior(student_t(3, 0, 2), class = "sd", group = "Tutoring"),
+  prior(lkj(2), class = "cor", group = "Tutoring"),
+  prior(normal(0, 2), class = "Intercept")
+)
+
+# Fit the model
+refined_model <- brm(
+  formula = GradeClass ~ StudyTimeWeekly_z * Absences_z + Gender + ParentalSupport + 
+             Extracurricular + Sports + Music + Volunteering + 
+             (1 + StudyTimeWeekly_z + Absences_z | Tutoring) + 
+             (1 | ActivityGroup),
+  data = student_data,
+  family = cumulative(link = "logit"),
+  prior = refined_priors,
+  iter = 2000,
+  warmup = 1000,
+  chains = 4,
+  cores = 4
+)
+
+# Model Summary
+summary(refined_model)
+
+```
+
+```{r}
+# Run PPC on the refined model
+library(bayesplot)
+
+# Overlay plot of observed vs simulated data
+pp_check(refined_model, ndraws = 100)
+
+# Histograms of predicted vs observed
+pp_check(refined_model, type = "hist", ndraws = 100)
+
+# Compare means or other summary statistics
+pp_check(refined_model, type = "stat", stat = "mean")
+pp_check(refined_model, type = "stat", stat = "sd")
+
+
+```
+
+
+
+
+```{r}
+# Optional: Save the model for future use
+saveRDS(refined_model, "RedefinedModel12OrderedLogisticRegressionforOrdinal.rds")
+```
+
+
+
+```{r}
+# Load required libraries
+library(brms)
+library(bayesplot)
+
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Ensure that the data is correctly processed
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+# Create a new variable for activity group (Active or Inactive based on participation)
+student_data$ActivityGroup <- with(student_data, 
+                                    ifelse(Extracurricular == 1 | Sports == 1 | Music == 1 | Volunteering == 1, 
+                                           "Active", "Inactive"))
+
+# Define priors
+refined_priors <- c(
+  set_prior("normal(0, 1)", class = "b"),         # Fixed effects
+  set_prior("normal(0, 5)", class = "Intercept"), # Intercept
+  set_prior("student_t(3, 0, 2.5)", class = "sd"),# Random effects standard deviation
+  set_prior("lkj(2)", class = "cor")             # Correlation matrices
+)
+
+# Fit the refined model
+refined_model <- brm(
+  formula = GradeClass ~ StudyTimeWeekly_z * Absences_z + Gender + ParentalSupport + 
+             Extracurricular + Sports + Music + Volunteering + 
+             (1 + StudyTimeWeekly_z + Absences_z | Tutoring) + 
+             (1 | ActivityGroup),
+  data = student_data,
+  family = cumulative(link = "logit"),
+  prior = refined_priors,
+  iter = 2000,
+  warmup = 1000,
+  chains = 4,
+  cores = 4,
+  control = list(adapt_delta = 0.95)
+)
+
+# Check model summary
+summary(refined_model)
+
+```
+
+```{r}
+# Check model summary
+summary(refined_model)
+
+# Perform posterior predictive checks
+pp_check(refined_model, ndraws = 100)
+
+# Generate posterior predictions
+posterior_samples <- posterior_predict(refined_model, ndraws = 100)
+head(posterior_samples)
+
+# Conduct posterior predictive checks (PPC)
+pp_check(refined_model)
+
+# Check for divergent transitions
+rstan::check_divergences(refined_model$fit)
+
+# Visualize the random effects
+plot(refined_model, pars = "^sd_")
+
+# Check prior summary
+prior_summary(refined_model)
+
+
+```
+
+
+```{r}
+
+# Load required libraries
+library(brms)
+library(bayesplot)
+
+# Read in your dataset
+student_data <- read.csv("Student_performance_data.csv")
+
+# Ensure that the data is correctly processed
+# Convert GradeClass to an ordered factor
+student_data$GradeClass <- factor(student_data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+
+# Scale continuous predictors
+student_data$Age_z <- scale(student_data$Age)
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+# Create a new variable for activity group (Active or Inactive based on participation)
+student_data$ActivityGroup <- with(student_data, 
+                                    ifelse(Extracurricular == 1 | Sports == 1 | Music == 1 | Volunteering == 1, 
+                                           "Active", "Inactive"))
+
+
+refined_priors <- c(
+  set_prior("normal(0, 1)", class = "b"),         # Fixed effects
+  set_prior("normal(0, 5)", class = "Intercept"), # Intercept
+  set_prior("normal(0, 1)", class = "sd"),        # Random effects standard deviation
+  set_prior("lkj(2)", class = "cor")             # Correlation matrices
+)
+
+refined_model <- brm(
+  formula = GradeClass ~ StudyTimeWeekly_z + Absences_z + Gender + ParentalSupport + 
+             Extracurricular + Sports + Music + Volunteering + 
+             (1 | Tutoring) + 
+             (1 | ActivityGroup),
+  data = student_data,
+  family = cumulative(link = "logit"),
+  prior = refined_priors,
+  iter = 3000,
+  warmup = 1000,
+  chains = 4,
+  cores = 4,
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+
+```
+
+

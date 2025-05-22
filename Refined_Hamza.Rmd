@@ -1,0 +1,476 @@
+---
+title: "Refined_Hamza"
+author: "Zeynep Beyza Aktepe"
+date: "2025-01-20"
+output: html_document
+---
+
+```{r}
+library(brms)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+data <- read.csv("Student_performance.csv")
+```
+
+
+```{r}
+# Convert GradeClass to an ordered factor
+data$GradeClass <- factor(data$GradeClass, 
+                                  levels = c(0, 1, 2, 3, 4), 
+                                  labels = c("A", "B", "C", "D", "F"), 
+                                  ordered = TRUE)
+```
+
+
+```{r}
+# Check the structure of GradeClass
+str(data$GradeClass)
+```
+
+
+```{r}
+# Confirm the levels and encoding
+levels(data$GradeClass)
+head(data)
+```
+
+
+```{r}
+# Check for missing values in the dataset
+colSums(is.na(data))
+```
+
+
+```{r}
+# Summarize key variables
+summary(data)
+```
+
+
+```{r}
+# Visualize the distribution of GradeClass
+ggplot(data, aes(x = GradeClass)) +
+  geom_bar() +
+  labs(title = "Distribution of GradeClass", x = "Grade Class", y = "Count")
+```
+
+```{r}
+# Explore relationships between predictors and GradeClass
+ggplot(data, aes(x = ParentalEducation, fill = GradeClass)) +
+  geom_bar(position = "fill") +
+  labs(title = "Parental Education vs Grade Class", x = "Parental Education", y = "Proportion") +
+  theme_minimal()
+```
+
+
+```{r}
+# Explore relationships between predictors and GradeClass
+ggplot(data, aes(x = Ethnicity, fill = GradeClass)) +
+  geom_bar(position = "fill") +
+  labs(title = "Ethnicity vs Grade Class", x = "Ethnicity", y = "Proportion") +
+  theme_minimal()
+```
+
+
+```{r}
+# Standardize numeric predictors
+data <- data %>%
+  mutate(
+    StudyTimeWeekly = scale(StudyTimeWeekly),
+    Absences = scale(Absences)
+  )
+```
+
+
+```{r}
+# Define improved priors
+priors <- c(
+  set_prior("normal(0, 2)", class = "b"),         # Stronger prior for fixed effects
+  set_prior("cauchy(0, 2)", class = "sd"),        # Priors for random effect standard deviations
+  set_prior("normal(0, 5)", class = "Intercept")  # Prior for intercepts
+)
+```
+
+
+```{r}
+# Explicitly use non-centered parameterization in brms
+model <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + StudyTimeWeekly + Absences + 
+            Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+            (1 | Ethnicity),  # Random intercept for Ethnicity
+  family = cumulative(link = "logit"),  # Ordinal logistic regression
+  data = data,
+  prior = priors,
+  cores = 8,  # Parallel computation
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.99, max_treedepth = 15),
+  backend = "cmdstanr"  # Use cmdstan backend for more efficient sampling
+)
+```
+
+```{r}
+summary(model)
+```
+# Predictors like Absences and Tutoring might dominate the posterior, leading to imbalances in sampling.
+# 2 divergences means certain parts of the posterior distribution might still be problematic.
+
+```{r}
+# Step 1: Data Preprocessing
+# Standardize continuous predictors to improve model stability
+data <- data %>%
+  mutate(
+    StudyTimeWeekly_z = scale(StudyTimeWeekly),
+    Absences_z = scale(Absences)
+  )
+```
+
+
+```{r}
+# Step 2: Define Priors
+# Use tighter priors to constrain parameter space and improve sampling stability
+priors <- c(
+  prior(normal(0, 0.5), class = "b"),                     # Stronger prior for regression coefficients
+  prior(student_t(3, 0, 2), class = "Intercept")          # Narrower prior for intercepts
+)
+
+```
+
+# Below model is the one before the last model.
+
+```{r}
+# Step 3: Fit the Model
+model <- brm(
+  formula = GradeClass ~ Gender * ParentalSupport + StudyTimeWeekly_z + Absences_z  + 
+                                Sports + Music + Volunteering + (1 + Tutoring + Extracurricular | ParentalEducation), 
+  family = cumulative(link = "logit"), 
+  data = data,
+  prior = priors,
+  cores = 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r}
+# Step 4: Summarize Results
+# Print the summary of the model
+summary(model)
+```
+
+```{r}
+# Step 5: Posterior Predictive Checks
+# Evaluate model fit with posterior predictive checks
+pp_check(model)
+```
+
+```{r}
+# Plot marginal effects of significant predictors
+marginal_effects(model)
+```
+
+
+```{r}
+# Generate posterior predictive check plots
+pp_check(model, type = "dens_overlay")
+pp_check(model, type = "hist")
+```
+
+
+```{r}
+## Save visualizations
+#plot1 <- marginal_effects(model)
+#ggsave("marginal_effects_plot2.png", plot = plot1, width = 8, height = 6)
+
+```
+
+
+```{r}
+# Conditional effects to show relationships
+conditional_effects(model, effects = "StudyTimeWeekly_z:Absences_z")
+
+```
+
+```{r}
+# Compute WAIC (Watanabe-Akaike Information Criterion)
+waic_result <- waic(model)
+```
+
+```{r}
+# Compute LOO (Leave-One-Out Cross-Validation)
+loo_result <- loo(model)
+```
+
+
+```{r}
+# Print the results
+print(waic_result)
+print(loo_result)
+```
+
+# Below model is the last model.
+
+```{r}
+# Read in your dataset
+student_data <- read.csv("Student_performance.csv")
+```
+
+
+```{r}
+# Scale continuous predictors
+student_data$StudyTimeWeekly_z <- scale(student_data$StudyTimeWeekly)
+student_data$Absences_z <- scale(student_data$Absences)
+
+```
+
+
+```{r}
+formula = GPA ~ Gender * ParentalSupport + StudyTimeWeekly_z + Absences_z  + 
+                                Sports + Music + Volunteering + (1 + Tutoring + Extracurricular | ParentalEducation)
+```
+
+
+```{r}
+priors <- c(
+  prior(normal(0, 0.5), class = "b"),                     # Stronger prior for regression coefficients
+  prior(student_t(3, 0, 2), class = "Intercept")          # Narrower prior for intercepts
+)
+```
+
+
+```{r}
+# Fit the Bayesian hierarchical model using Gaussian family for continuous GPA
+model_continuous <- brm(
+  formula = formula,
+  family = "gaussian",   # Gaussian family for continuous outcome
+  data = data,
+  prior = priors,
+  cores= 8,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.999, max_treedepth = 20),
+  backend = "cmdstanr"
+)
+```
+
+```{r}
+# Print a summary of the model
+summary(model_continuous)
+```
+
+```{r}
+loo_model1 <- loo(model_continuous)  # For Model #1
+loo_model2 <- loo(model)            # For Model #2
+```
+
+```{r}
+print(loo_model1)
+print(loo_model2)
+```
+
+
+```{r}
+#loo_compare(loo(model), loo(model_continuous))
+```
+
+
+```{r}
+predictions <- posterior_predict(model)
+pred_classes <- apply(predictions, 2, function(x) which.max(table(x)))
+accuracy <- mean(pred_classes == as.numeric(data$GradeClass))
+```
+
+```{r}
+pp_check(model, type = "bars")
+```
+
+```{r}
+predictions <- posterior_predict(model_continuous)
+mse <- mean((data$GPA - colMeans(predictions))^2)
+bayes_R2(model_continuous)
+```
+
+```{r}
+pp_check(model_continuous, type = "dens_overlay")
+```
+
+
+```{r}
+table(Predicted = pred_classes, Observed = data$GradeClass)
+```
+
+```{r}
+#cv_results <- kfold(model_continuous, K = 10)
+```
+
+```{r}
+#print(cv_results)
+```
+
+```{r}
+#cv_results <- kfold(model, K = 10)
+```
+
+```{r}
+#print(cv_results)
+```
+
+```{r}
+plot(residuals(model_continuous))
+```
+
+```{r}
+bayesplot::pp_check(model, type = "scatter_avg")
+```
+
+
+### Prior Sensitivity Analysis ###
+
+1. Define a Set of Alternative Priors
+```{r}
+priors_alt1 <- c(
+  set_prior("normal(0, 1)", class = "b"),  # Narrower prior for regression coefficients
+  set_prior("cauchy(0, 1)", class = "sd"),  # Tighter prior for random effects
+  set_prior("student_t(3, 0, 2)", class = "Intercept")  # Informative prior for intercepts
+)
+
+priors_alt2 <- c(
+  set_prior("normal(0, 10)", class = "b"),  # Weakly informative priors
+  set_prior("cauchy(0, 5)", class = "sd"),  # Broader prior for random effects
+  set_prior("normal(0, 10)", class = "Intercept")  # Weakly informative prior for intercepts
+)
+
+```
+
+2. Refit the Model with Alternative Priors
+```{r}
+# Model with alternative priors (tight priors)
+model_alt1 <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + StudyTimeWeekly + Absences + 
+    Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+    (1 | Ethnicity),
+  family = cumulative(link = "logit"),
+  data = data,
+  prior = priors_alt1,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+# Model with alternative priors (weak priors)
+model_alt2 <- brm(
+  formula = GradeClass ~ Gender + ParentalEducation + StudyTimeWeekly + Absences + 
+    Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+    (1 | Ethnicity),
+  family = cumulative(link = "logit"),
+  data = data,
+  prior = priors_alt2,
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+```
+
+
+3. Compare Posterior Estimates
+Visual Comparison:
+```{r}
+# Extract posterior samples for the original and alternative models
+posterior_original <- posterior_samples(model)
+posterior_alt1 <- posterior_samples(model_alt1)
+posterior_alt2 <- posterior_samples(model_alt2)
+
+# Combine into a single data frame
+posterior_combined <- bind_rows(
+  posterior_original %>% mutate(Model = "Original"),
+  posterior_alt1 %>% mutate(Model = "Alt1"),
+  posterior_alt2 %>% mutate(Model = "Alt2")
+)
+
+# Plot density ridges for a parameter (e.g., "b_Absences")
+library(ggridges)
+ggplot(posterior_combined, aes(x = b_Absences, y = Model, fill = Model)) +
+  geom_density_ridges(alpha = 0.5) +
+  labs(title = "Prior Sensitivity Analysis: Effect of Absences",
+       x = "Posterior Estimate (Absences)", y = "Model") +
+  theme_minimal()
+
+```
+
+Numerical Comparison:
+```{r}
+# Summarize posterior estimates for key parameters
+summary_original <- summary(model)$fixed
+summary_alt1 <- summary(model_alt1)$fixed
+summary_alt2 <- summary(model_alt2)$fixed
+
+# Combine into a table for comparison
+sensitivity_results <- bind_rows(
+  Original = summary_original,
+  Alt1 = summary_alt1,
+  Alt2 = summary_alt2,
+  .id = "Model"
+)
+
+# Print the table
+print(sensitivity_results)
+
+```
+
+4. Evaluate Model Fit
+Posterior Predictive Checks:
+```{r}
+# Original model
+pp_check(model, type = "dens_overlay")
+
+# Alternative models
+pp_check(model_alt1, type = "dens_overlay")
+pp_check(model_alt2, type = "dens_overlay")
+
+```
+
+Model Fit Comparison:
+```{r}
+# Compare WAIC or LOO
+loo_original <- loo(model)
+loo_alt1 <- loo(model_alt1)
+loo_alt2 <- loo(model_alt2)
+
+# Compare results
+loo_compare(loo_original, loo_alt1, loo_alt2)
+
+```
+
+Interpreting the Results
+
+Robustness:
+- If the posterior distributions and model performance metrics (e.g., LOO, WAIC) remain consistent across different priors, your results are robust.
+- If they change significantly, your results are sensitive to prior assumptions.
+
+Improvement:
+- Use the priors that yield better fit (lower WAIC or higher LOO-ELPD).
+- Adjust the priors further based on domain knowledge or data characteristics.
+
+```{r}
+# Refined Model with Increased Stability
+model_final <- brm(
+  GradeClass ~ Gender + ParentalEducation + StudyTimeWeekly + Absences + 
+    Tutoring + ParentalSupport + Extracurricular + Sports + Music + Volunteering +
+    (1 | Ethnicity),
+  family = cumulative(link = "logit"),
+  data = data,
+  prior = priors_alt2,  # Use weakly informative priors for robustness
+  iter = 4000, warmup = 2000, chains = 4, seed = 123,
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+
+# Posterior Predictive Check
+pp_check(model_final)
+
+# LOO Cross-Validation
+loo_final <- loo(model_final)
+print(loo_final)
+
+```
+
